@@ -2,8 +2,11 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Download } from 'lucide-react';
 
+const SAFE_URL = /^(https?:|blob:|data:image\/)/i;
+
 export default function ImageLightbox({ url, onClose }) {
-  if (!url) return null;
+  // Image URLs come from untrusted Nostr events; block javascript:/other schemes in the href.
+  if (!url || !SAFE_URL.test(String(url).trim())) return null;
 
   return (
     <AnimatePresence>

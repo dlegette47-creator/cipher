@@ -1,7 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { db } from '../db';
 
 export function usePanicWipe(identity, enabled) {
+  // useIdentity returns a new object every render; keep it in a ref so the
+  // listener (and its arm delay) isn't torn down and re-armed on every render.
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+
   useEffect(() => {
     if (!enabled) return;
 
@@ -9,6 +14,7 @@ export function usePanicWipe(identity, enabled) {
     let lastTime = 0;
     let spikeCount = 0;
     let lastSpikeTime = 0;
+    let cancelled = false;
     // Critical: ignore motion for 3 seconds after toggling, so the tap itself doesn't wipe
     const ARM_DELAY = 3000;
     const armTime = Date.now() + ARM_DELAY;
@@ -19,8 +25,33 @@ export function usePanicWipe(identity, enabled) {
     const REQUIRED_SPIKES = 3;      // must detect this many spikes in the window
     const MIN_EVENT_INTERVAL = 50;  // throttle to ~20Hz
 
+    const triggerWipe = async () => {
+      if (window.__PANIC_WIPING) return;
+      window.__PANIC_WIPING = true;
+
+      if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 300]);
+
+      // Full wipe: every account's IndexedDB, caches, service workers, storage.
+      const fullWipe = identityRef.current?.panicWipe;
+      if (typeof fullWipe === 'function') {
+        await fullWipe();
+        return;
+      }
+
+      try {
+        sessionStorage.clear();
+        localStorage.clear();
+        await Promise.race([
+          db.delete().catch(() => {}),
+          new Promise((r) => setTimeout(r, 800)),
+        ]);
+      } catch (e) {
+        // ignore
+      }
+      window.location.reload();
+    };
+
     const handleMotion = (event) => {
-      // Still arming — ignore all motion
       if (Date.now() < armTime) return;
 
       const a = event.accelerationIncludingGravity || event.acceleration;
@@ -31,13 +62,9 @@ export function usePanicWipe(identity, enabled) {
       lastTime = now;
 
       if (lastX !== null) {
-        const dX = Math.abs(a.x - lastX);
-        const dY = Math.abs(a.y - lastY);
-        const dZ = Math.abs(a.z - lastZ);
-        const magnitude = dX + dY + dZ;
+        const magnitude = Math.abs(a.x - lastX) + Math.abs(a.y - lastY) + Math.abs(a.z - lastZ);
 
         if (magnitude > SHAKE_THRESHOLD) {
-          // Reset counter if last spike was too long ago
           if (now - lastSpikeTime > SPIKE_WINDOW) spikeCount = 0;
           spikeCount++;
           lastSpikeTime = now;
@@ -51,29 +78,6 @@ export function usePanicWipe(identity, enabled) {
       lastX = a.x;
       lastY = a.y;
       lastZ = a.z;
-    };
-
-    const triggerWipe = async () => {
-      if (window.__PANIC_WIPING) return;
-      window.__PANIC_WIPING = true;
-
-      // Vibrate to confirm (three buzzes)
-      if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 300]);
-
-      try {
-        sessionStorage.clear();
-        localStorage.clear();
-        // Attempt DB delete with timeout — don't hang forever
-        await Promise.race([
-          db.delete().catch(() => {}),
-          new Promise((r) => setTimeout(r, 800)),
-        ]);
-      } catch (e) {
-        // ignore
-      }
-
-      // Reload to lock screen (all data gone)
-      window.location.reload();
     };
 
     const setup = async () => {
@@ -93,13 +97,14 @@ export function usePanicWipe(identity, enabled) {
           return;
         }
       }
-      window.addEventListener('devicemotion', handleMotion);
+      if (!cancelled) window.addEventListener('devicemotion', handleMotion);
     };
 
     setup();
 
     return () => {
+      cancelled = true;
       window.removeEventListener('devicemotion', handleMotion);
     };
-  }, [enabled, identity]);
+  }, [enabled]);
 }

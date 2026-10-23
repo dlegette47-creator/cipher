@@ -32,29 +32,45 @@ async function sha256(message) {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-async function getKey(secret) {
+// Vaults created before per-vault salts used a fixed salt + 100k iterations.
+// They still decrypt, and are transparently re-encrypted on the next successful unlock.
+const LEGACY_SALT = new TextEncoder().encode("cipher_secure_salt")
+const LEGACY_ITERATIONS = 100000
+const KDF_ITERATIONS = 600000
+
+async function getKey(secret, salt = LEGACY_SALT, iterations = LEGACY_ITERATIONS) {
   const enc = new TextEncoder()
   const keyMaterial = await crypto.subtle.importKey(
     "raw", enc.encode(secret), { name: "PBKDF2" }, false, ["deriveKey"]
   )
   return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: enc.encode("cipher_secure_salt"), iterations: 100000, hash: "SHA-256" },
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
     keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
   )
 }
 
+export const isLegacyVault = (encryptedObj) => !encryptedObj?.salt
+
 export async function encryptKey(skArray, secret) {
-  const key = await getKey(secret)
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  const key = await getKey(secret, salt, KDF_ITERATIONS)
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const enc = new TextEncoder()
   const encrypted = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv }, key, enc.encode(JSON.stringify(skArray))
   )
-  return { iv: Array.from(iv), data: Array.from(new Uint8Array(encrypted)) }
+  return {
+    iv: Array.from(iv),
+    data: Array.from(new Uint8Array(encrypted)),
+    salt: Array.from(salt),
+    iter: KDF_ITERATIONS,
+  }
 }
 
 export async function decryptKey(encryptedObj, secret) {
-  const key = await getKey(secret)
+  const key = isLegacyVault(encryptedObj)
+    ? await getKey(secret)
+    : await getKey(secret, new Uint8Array(encryptedObj.salt), encryptedObj.iter || KDF_ITERATIONS)
   const decrypted = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: new Uint8Array(encryptedObj.iv) }, key, new Uint8Array(encryptedObj.data)
   )
@@ -98,7 +114,7 @@ export function useIdentity() {
       }
 
       const vault = localStorage.getItem('cipher_vault')
-      if (vault) setHasVault(true)
+      if (vault || Object.keys(getVaults()).length > 0) setHasVault(true)
 
       const bioEnabled = localStorage.getItem('cipher_biometric_enabled')
       if (bioEnabled === 'true') {
@@ -225,6 +241,20 @@ export function useIdentity() {
       const { getPublicKey, nip19 } = await import('nostr-tools')
       const sk = Uint8Array.from(skArray)
       const pk = getPublicKey(sk)
+
+      if (isLegacyVault(vault)) {
+        try {
+          const upgraded = await encryptKey(skArray, pin)
+          const current = getVaults()
+          if (current[pk]) {
+            current[pk].vault = upgraded
+            saveVaults(current)
+          }
+          if (!activePk || activePk === pk) {
+            localStorage.setItem('cipher_vault', JSON.stringify(upgraded))
+          }
+        } catch (upgradeErr) { console.warn('Vault upgrade skipped:', upgradeErr) }
+      }
       
       sessionStorage.setItem('cipher_session_sk', JSON.stringify(Array.from(sk)))
       localStorage.setItem('cipher_fails', '0')
@@ -236,18 +266,22 @@ export function useIdentity() {
       if (fails >= 5) {
         // Only wipe THIS account's vault — other accounts stay intact
         const activePk = getActivePubkey();
-        if (activePk) {
-          try {
-            const vaults = getVaults();
-            delete vaults[activePk];
-            saveVaults(vaults);
-            // Also clear the legacy single-vault if it belongs to this account
-            const legacyVault = localStorage.getItem('cipher_vault');
-            if (legacyVault) localStorage.removeItem('cipher_vault');
-            // Clear active pointer so next open shows create/restore
-            localStorage.removeItem('cipher_active_pubkey');
-          } catch (e) {}
-        }
+        try {
+          const vaults = getVaults();
+          const legacyVault = localStorage.getItem('cipher_vault');
+          // Only remove the legacy single-vault if it belongs to the locked-out account
+          // (or there is no multi-account entry, i.e. it IS the locked-out account).
+          const legacyBelongsToActive = !activePk || !vaults[activePk] ||
+            (legacyVault && JSON.stringify(vaults[activePk].vault) === legacyVault);
+          if (activePk) delete vaults[activePk];
+          saveVaults(vaults);
+          if (legacyVault && legacyBelongsToActive) {
+            localStorage.removeItem('cipher_vault');
+            localStorage.removeItem('cipher_handle');
+          }
+          localStorage.removeItem('cipher_active_pubkey');
+          localStorage.setItem('cipher_fails', '0');
+        } catch (wipeErr) { console.error('Lockout wipe failed:', wipeErr) }
         sessionStorage.removeItem('cipher_session_sk');
         window.location.reload();
       }
@@ -386,12 +420,22 @@ export function useIdentity() {
 
   const panicWipe = async () => {
     try {
-      // 1. Delete ALL IndexedDB databases (messages, keys, addresses)
+      // 1. Delete ALL IndexedDB databases (messages, keys, addresses).
+      // Close our own connection first so the delete isn't blocked.
+      try {
+        const { closeDB } = await import('./db');
+        closeDB();
+      } catch (e) {}
       if (typeof indexedDB !== 'undefined' && indexedDB.databases) {
         const dbs = await indexedDB.databases();
-        await Promise.allSettled(dbs.map(d => {
-          if (d.name) return indexedDB.deleteDatabase(d.name);
-        }));
+        const deleteOne = (name) => new Promise((resolve) => {
+          const req = indexedDB.deleteDatabase(name);
+          req.onsuccess = req.onerror = req.onblocked = () => resolve();
+        });
+        await Promise.race([
+          Promise.allSettled(dbs.filter(d => d.name).map(d => deleteOne(d.name))),
+          new Promise((r) => setTimeout(r, 1500)),
+        ]);
       }
       // 2. Unregister service workers (PWA cache)
       if ('serviceWorker' in navigator) {

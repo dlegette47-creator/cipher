@@ -69,7 +69,6 @@ function MainApp() {
     return () => document.removeEventListener('visibilitychange', handler);
   }, [identity?.sk]);
 
-  if (identity?.pk) console.log('YOUR PUBKEY:', identity.pk)
   const [activeTab, setActiveTab] = useState('chat')
   const unreadCounts = useChatStore(s => s.unreadCounts);
   const totalUnread = Object.values(unreadCounts || {}).reduce((sum, n) => sum + (n || 0), 0);;

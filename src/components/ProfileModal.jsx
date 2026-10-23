@@ -10,10 +10,24 @@ export default function ProfileModal({ pubkey, profile, identity, onClose, onMes
   const { stats: vendorStats } = useVendorStats({ identity, targetPubkey: pubkey });
   const [vouching, setVouching] = useState(false);
   const [showFiltered, setShowFiltered] = useState(false);
+  const blockedUsers = useChatStore(s => s.blockedUsers);
+  const toggleBlockUser = useChatStore(s => s.toggleBlockUser);
+  const [safetyNumber, setSafetyNumber] = useState(null);
+  const isSelf = identity?.pk === pubkey;
 
   useEffect(() => {
     if (pubkey) fetchReputation(pubkey);
   }, [pubkey, fetchReputation]);
+
+  useEffect(() => {
+    if (pubkey && !isSelf && identity?.pk) {
+      const keys = [identity.pk, pubkey].sort().join('');
+      crypto.subtle.digest('SHA-256', new TextEncoder().encode(keys)).then(hash => {
+        const hex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+        setSafetyNumber(hex.slice(0, 30).match(/.{1,5}/g).join(' ').toUpperCase());
+      });
+    }
+  }, [pubkey, identity?.pk, isSelf]);
 
   if (!pubkey) return null;
 
@@ -28,21 +42,7 @@ export default function ProfileModal({ pubkey, profile, identity, onClose, onMes
   const isSeller = reputation?.reviewCount >= 5;
   const rating = reputation?.avgRating || 0;
 
-  const isSelf = identity?.pk === pubkey;
-  const blockedUsers = useChatStore(s => s.blockedUsers);
-  const toggleBlockUser = useChatStore(s => s.toggleBlockUser);
-  const isBlocked = blockedUsers.includes(pubkey);
-  const [safetyNumber, setSafetyNumber] = useState(null);
-
-  useEffect(() => {
-    if (!isSelf && identity?.pk) {
-      const keys = [identity.pk, pubkey].sort().join('');
-      crypto.subtle.digest('SHA-256', new TextEncoder().encode(keys)).then(hash => {
-        const hex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-        setSafetyNumber(hex.slice(0, 30).match(/.{1,5}/g).join(' ').toUpperCase());
-      });
-    }
-  }, [pubkey, identity?.pk, isSelf]);
+  const isBlocked = (blockedUsers || []).includes(pubkey);
   const isVouched = reputation?.hasVouched;
 
   const handleVouch = async () => {
