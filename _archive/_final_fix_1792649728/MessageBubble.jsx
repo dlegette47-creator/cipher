@@ -1,0 +1,239 @@
+import React, { useState } from 'react';
+import { generalRelays } from '../lib/relays';
+import { Package, Reply, Copy, Pin, Trash2, Forward, ShieldAlert, Smile, CheckCircle2 } from 'lucide-react';
+
+function renderMessage(text) {
+  if (!text) return null;
+  const parts = text.split(/(\|\|.*?\|\|)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('||') && part.endsWith('||')) {
+      return <span key={i} onClick={(e) => { e.currentTarget.classList.remove('blur-sm', 'text-transparent'); e.currentTarget.classList.add('text-white'); }} className="bg-surfaceLight px-1 rounded cursor-pointer blur-sm text-transparent transition-all select-none">{part.slice(2, -2)}</span>;
+    }
+    const boldParts = part.split(/(\*\*.*?\*\*)/g);
+    return boldParts.map((bp, j) => {
+      if (bp.startsWith('**') && bp.endsWith('**')) return <strong key={`${i}-${j}`}>{bp.slice(2, -2)}</strong>;
+      return bp;
+    });
+  });
+}
+
+export default function MessageBubble({
+  msg, data, showTail, repliedTo, repliedData, onSelect, isGroup,
+  onSenderClick, senderName, reactions, onReact, myPubkey, isSelected, onAction, identity
+}) {
+  const [showActions, setShowActions] = useState(false);
+  const type = data?.type || 'text';
+  const bodyText = data?.message || '';
+
+  const aggregated = (() => {
+    if (!reactions || reactions.length === 0) return [];
+    const map = {};
+    reactions.forEach((r) => {
+      if (!map[r.emoji]) map[r.emoji] = { emoji: r.emoji, count: 0, hasMine: false };
+      map[r.emoji].count++;
+      if (r.pubkey === myPubkey) map[r.emoji].hasMine = true;
+    });
+    return Object.values(map);
+  })();
+
+  return (
+    <div className={`relative flex flex-col ${msg.isSender ? 'items-end' : 'items-start'} animate-fade-in`}>
+      
+      {/* Floating Popover */}
+      {isSelected && (
+        <div 
+          className={`absolute -top-12 ${msg.isSender ? 'right-0' : 'left-0'} flex flex-col items-${msg.isSender ? 'end' : 'start'} z-[100] animate-slide-up`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex gap-1 bg-[#1c1c1e] rounded-full p-1.5 shadow-2xl border border-white/10">
+            {['❤️', '👍', '🔥', '😂', '😮', '😢', '🙏'].map((emoji) => (
+              <button
+                key={emoji}
+                onClick={(e) => { e.stopPropagation(); try { onReact(emoji); } catch(err) { console.error(err); } onSelect(null, null, 'close'); }}
+                className="w-8 h-8 flex items-center justify-center text-xl hover:scale-125 transition-transform"
+              >
+                {emoji}
+              </button>
+            ))}
+            <div className="w-[1px] bg-white/10 mx-1"></div>
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowActions(!showActions); }}
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${showActions ? 'bg-white/20 text-white' : 'bg-white/5 text-white/70 hover:text-white'}`}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+            </button>
+          </div>
+
+          {showActions && (
+            <div className={`mt-2 bg-[#1c1c1e] rounded-2xl p-2 flex flex-col gap-1 shadow-2xl border border-white/10 w-48 ${msg.isSender ? 'items-end' : 'items-start'}`}>
+              <button onClick={(e) => { e.stopPropagation(); onAction('reply', msg); }} className="flex items-center gap-3 w-full text-left px-3 py-2.5 text-sm text-white hover:bg-white/5 rounded-xl transition-colors"><Reply size={16} className="text-white/50" /> Reply</button>
+              <button onClick={(e) => { e.stopPropagation(); onAction('copy', msg); }} className="flex items-center gap-3 w-full text-left px-3 py-2.5 text-sm text-white hover:bg-white/5 rounded-xl transition-colors"><Copy size={16} className="text-white/50" /> Copy Text</button>
+              <button onClick={(e) => { e.stopPropagation(); onAction('copy_link', msg); }} className="flex items-center gap-3 w-full text-left px-3 py-2.5 text-sm text-white hover:bg-white/5 rounded-xl transition-colors"><Smile size={16} className="text-white/50" /> Copy Post Link</button>
+              <button onClick={(e) => { e.stopPropagation(); onAction('forward', msg); }} className="flex items-center gap-3 w-full text-left px-3 py-2.5 text-sm text-white hover:bg-white/5 rounded-xl transition-colors"><Forward size={16} className="text-white/50" /> Forward Message</button>
+              {onAction('can_pin', msg) && (
+                <button onClick={(e) => { e.stopPropagation(); onAction('pin', msg); }} className="flex items-center gap-3 w-full text-left px-3 py-2.5 text-sm text-yellow-400 hover:bg-white/5 rounded-xl transition-colors"><Pin size={16} className="text-yellow-400/50" /> Pin Message</button>
+              )}
+              {msg.isSender && (
+                <button onClick={(e) => { e.stopPropagation(); onAction('delete', msg); }} className="flex items-center gap-3 w-full text-left px-3 py-2.5 text-sm text-red-500 hover:bg-white/5 rounded-xl transition-colors"><Trash2 size={16} className="text-red-500/50" /> Delete Message</button>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); onAction('report', msg); }} className="flex items-center gap-3 w-full text-left px-3 py-2.5 text-sm text-red-500 hover:bg-white/5 rounded-xl transition-colors"><ShieldAlert size={16} className="text-red-500/50" /> Report</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div
+        onClick={() => onSelect?.(msg, data)}
+        className={`message-bubble-container max-w-[85%] px-4 py-2 relative shadow-sm cursor-pointer group ${
+          msg.isSender
+            ? `bg-[#2b5278] text-white ${showTail ? 'rounded-2xl rounded-tr-sm' : 'rounded-2xl'}`
+            : `bg-[#182533] text-white ${showTail ? 'rounded-2xl rounded-tl-sm' : 'rounded-2xl'}`
+        }`}
+      >
+        {repliedTo && (
+          <div className="bg-black/20 p-2 rounded-lg mb-2 border-l-2 border-blue-400 text-xs text-white/70 truncate">
+            {repliedData?.message || repliedData?.url || 'Message'}
+          </div>
+        )}
+
+        {!msg.isSender && isGroup && (
+          <p onClick={(e) => { e.stopPropagation(); onSenderClick && onSenderClick(msg.pubkey); }} className="text-[11px] text-blue-300 font-semibold mb-1 cursor-pointer hover:underline">
+            {senderName || `User ${msg.pubkey.slice(0, 4)}`}
+          </p>
+        )}
+
+        {type === 'cipher_order' && (
+          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-3 mb-2 min-w-[240px] shadow-lg">
+            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-white/10">
+              <Package size={16} className="text-blue-400" />
+              <span className="font-bold text-sm text-white">Order Receipt</span>
+            </div>
+            <div className="space-y-1 mb-2">
+              <p className="text-[11px] text-white/50 uppercase tracking-wider">Product</p>
+              <p className="text-sm font-semibold text-white truncate">{data.productName || 'Unknown Product'}</p>
+            </div>
+            <div className="flex justify-between items-center bg-black/40 p-2 rounded-lg mb-2">
+              <div>
+                <p className="text-[10px] text-white/50 uppercase">Amount</p>
+                <p className="text-sm font-bold text-green-400">${data.amountFiat ? Number(data.amountFiat).toFixed(2) : '0.00'}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-white/50 uppercase">Crypto</p>
+                <p className="text-[11px] font-mono text-white/80">{data.amountCrypto} {data.currency?.toUpperCase()}</p>
+              </div>
+            </div>
+
+            {data.shippingAddress && (
+              <div className="bg-black/40 p-2 rounded-lg mb-2">
+                <p className="text-[10px] text-white/50 uppercase mb-1">Ship To</p>
+                <p className="text-xs text-white/90 whitespace-pre-wrap">{data.shippingAddress}</p>
+              </div>
+            )}
+
+            <div className="mt-2 flex flex-col gap-2">
+              <div className="flex justify-center">
+                <span className={`text-[10px] font-bold px-3 py-1 rounded-full border ${
+                  data.status === 'completed' ? 'text-green-400 bg-green-400/10 border-green-400/20' : 
+                  data.status === 'shipped' ? 'text-purple-400 bg-purple-400/10 border-purple-400/20' :
+                  data.status === 'accepted' ? 'text-blue-400 bg-blue-400/10 border-blue-400/20' :
+                  'text-yellow-400 bg-yellow-400/10 border-yellow-400/20'
+                }`}>
+                  {(data.status || 'payment_sent').replace('_', ' ').toUpperCase()}
+                </span>
+              </div>
+
+              {msg.isSender && data.status !== 'completed' && (
+                <button 
+                  type="button"
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const btn = e.currentTarget;
+                    btn.innerText = "PUBLISHING...";
+                    try {
+                      const { finalizeEvent, SimplePool } = await import('nostr-tools');
+                      const pool = new SimplePool();
+                      const d = msg.data || {};
+                      const ev = finalizeEvent({
+                        kind: 10006,
+                        created_at: Math.floor(Date.now() / 1000),
+                        tags: [
+                          ['p', String(msg.pubkey || '')],
+                          ['e', String(msg.id || ''), '', 'order'],
+                          ['amount', String(d.amountFiat || '0')],
+                          ['currency', String(d.currency || 'USD')],
+                          ['crypto_amount', String(d.amountCrypto || '0')],
+                          ['order', String(d.productName || 'Item')]
+                        ],
+                        content: `Confirmed delivery of ${String(d.productName || 'Item')}`
+                      }, identity.sk);
+
+                      await Promise.allSettled(pool.publish(generalRelays, ev));
+                      btn.innerText = "PUBLISHED! ✓";
+                      btn.className = "w-full mt-1 bg-black text-green-400 border border-green-500 text-sm font-black uppercase tracking-wider py-3 rounded-xl transition-all relative z-50 cursor-pointer";
+                    } catch (err) {
+                      btn.innerText = "ERROR: " + err.message;
+                      btn.className = "w-full mt-1 bg-red-600 text-white text-sm font-black uppercase tracking-wider py-3 rounded-xl transition-all relative z-50 cursor-pointer";
+                    }
+                  }}
+                  className="w-full mt-1 bg-green-500 hover:bg-green-400 text-black text-sm font-black uppercase tracking-wider py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(34,197,94,0.4)] active:scale-95 relative z-50 cursor-pointer"
+                >
+                  CONFIRM DELIVERY
+                </button>
+              )}
+
+              {!msg.isSender && data.status !== 'completed' && (
+                <p className="text-[10px] text-white/40 text-center italic">Waiting for buyer to confirm delivery...</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {type === 'image' && (
+          <div className="relative">
+            <img src={data.url} className="rounded-lg max-h-60 object-cover mb-1" />
+            {data.metadata_stripped && (
+              <div className="absolute bottom-2 right-2 bg-black/70 text-[9px] text-green-400 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 border border-green-500/30">
+                🛡️ SAFE
+              </div>
+            )}
+          </div>
+        )}
+        {type === 'audio' && <audio controls src={data.url} className="max-w-full h-10 mb-1" />}
+        {type === 'text' && <p className="text-[15px] leading-snug break-words overflow-hidden w-full">{renderMessage(bodyText)}</p>}
+        
+        {type === 'order_update' && (
+          <div className="bg-blue-600/20 border border-blue-500/30 rounded-xl p-3 mb-2 flex items-center gap-3">
+            <CheckCircle2 size={20} className="text-blue-400" />
+            <div>
+              <p className="text-sm font-bold text-white">Order Update</p>
+              <p className="text-xs text-blue-300">Vendor marked order as <strong>{data.status.toUpperCase()}</strong></p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-1 mt-1 opacity-60">
+          <span className="text-[10px]">{new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        </div>
+      </div>
+
+      {aggregated.length > 0 && (
+        <div className={`flex flex-wrap gap-1 mt-1 ${msg.isSender ? 'justify-end' : 'justify-start'}`}>
+          {aggregated.map((r) => (
+            <button
+              key={r.emoji}
+              onClick={(e) => { e.stopPropagation(); onReact && onReact(r.emoji); }}
+              className={`text-[11px] px-2 py-0.5 rounded-full transition-colors ${
+                r.hasMine
+                  ? 'bg-blue-500/30 border border-blue-400/60 text-white'
+                  : 'bg-white/10 border border-white/10 text-white/80 hover:bg-white/20'
+              }`}
+            >
+              {r.emoji} {r.count}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

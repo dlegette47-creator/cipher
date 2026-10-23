@@ -1,0 +1,1844 @@
+import { useState, useEffect, useRef , useCallback} from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import {  
+  Package, MapPin, ArrowLeft, Send, Plus, Users, Search, Lock, X, Megaphone, 
+  CheckCheck, Share2, User, RefreshCw, Image as ImageIcon, Trash2, Smile, Store, Info, MoreVertical, 
+  Reply, Forward, Mic, Square, Play, Pin, Check
+, Copy as CopyIcon, Link as LinkIcon, ShieldAlert as ShieldAlertIcon } from 'lucide-react'
+import { uploadToBlossom } from '@nostr-wot/blossom'
+import { useProfiles } from './useProfiles'
+import { db, saveMessage , openDBFor} from './db'
+import ShopView from './components/ShopView'
+import OneTapCheckout from './components/OneTapCheckout'
+import MessageBubble from './components/MessageBubble'
+import ProfileModal from './components/ProfileModal'
+import MessageInput from './components/MessageInput'
+import { generalRelays, groupRelays, queryWithTimeout } from './lib/relays';
+import { getAuthenticatedPool } from './lib/pool';
+import { useChatStore } from './store/chatStore';
+import { useNIP44DM } from './hooks/useNIP44DM';
+import { useNIP29Group } from './hooks/useNIP29Group';
+import { useReactions } from './hooks/useReactions';
+import { useReputation } from './hooks/useReputation';
+import { stripImageMetadata } from './lib/media';
+import ChatHeader from './components/chat/ChatHeader';
+import ChatList from './components/chat/ChatList';
+import CreateGroupModal from './components/chat/CreateGroupModal';
+import FloatingMenu from './components/chat/FloatingMenu';
+import MyProfileModal from './components/chat/MyProfileModal';
+import SearchView from './components/chat/SearchView';
+import ChatPinnedBar from './components/chat/ChatPinnedBar';
+import ChatReplyPreview from './components/chat/ChatReplyPreview';
+import ReviewModal from './components/chat/ReviewModal';
+import FullEmojiPicker from './components/chat/FullEmojiPicker';
+
+function renderMessage(text) {
+  if (!text) return null;
+  const parts = text.split(/(\|\|.*?\|\|)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('||') && part.endsWith('||')) {
+      return <span key={i} onClick={(e) => { e.currentTarget.classList.remove('blur-sm', 'text-transparent'); e.currentTarget.classList.add('text-white'); }} className="bg-surfaceLight px-1 rounded cursor-pointer blur-sm text-transparent transition-all select-none">{part.slice(2, -2)}</span>
+    }
+    const boldParts = part.split(/(\*\*.*?\*\*)/g);
+    return boldParts.map((bp, j) => {
+      if (bp.startsWith('**') && bp.endsWith('**')) return <strong key={`${i}-${j}`}>{bp.slice(2, -2)}</strong>
+      return bp
+    })
+  })
+}
+
+
+// ✅ GLOBAL POOL: Lives outside React so StrictMode doesn't kill it
+// Revised Global Pool Logic
+
+const copyToClipboard = async (text) => {
+  console.log("[Clipboard] Attempting to copy:", text);
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      console.log("[Clipboard] Success via modern API");
+      return true;
+    }
+  } catch (err) {
+    console.warn("[Clipboard] Modern API failed, trying fallback", err);
+  }
+
+  // Fallback for mobile/HTTP
+  try {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.top = "0";
+    textArea.style.left = "0";
+    textArea.style.opacity = "0";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    console.log("[Clipboard] Fallback success:", successful);
+    return successful;
+  } catch (err) {
+    console.error("[Clipboard] Fallback failed", err);
+    return false;
+  }
+};
+
+export default function Chat({ identity }) {
+  const {
+    view, setView, activeDm, setActiveDm, activeGroup, setActiveGroup,
+    dms, setDms, groups, groupMessages, setGroupMessages,
+    reactions, setReactions, deletedMsgs, setDeletedMsgs,
+    replyingTo, setReplyingTo, loading, setLoading,
+    uploadingImage, setUploadingImage, isRecording, setIsRecording,
+    showMenu, setShowMenu, showCreateGroup, setShowCreateGroup,
+    checkoutProduct, setCheckoutProduct, myProducts, setMyProducts,
+    showAddProduct, setShowAddProduct, newProduct, setNewProduct,
+    showGroupInfo, setShowGroupInfo, groupMembers, setGroupMembers,
+    profiles, setProfiles, unreadCounts, setUnreadCounts,
+    searchQuery, setSearchQuery, searchResults, setSearchResults,
+    isSearching, setIsSearching, selectedMessage, setSelectedMessage,
+    newMessage, setNewMessage, newGroupName, setNewGroupName,
+    newGroupAbout, setNewGroupAbout, isChannel, setIsChannel,
+    toast, setToast, typingUsers, setTypingUsers, groupTypingUsers, setGroupTypingUsers,
+    profilePubkey, setProfilePubkey, showMyProfile, setShowMyProfile,
+    myName, setMyName, myUsername, setMyUsername, myAbout, setMyAbout
+  } = useChatStore();
+    
+  // 🛡️ BULLETPROOF GROUP FILTER
+  // Intercepts ALL setGroups calls. If "lmfao" or any relay group isn't in 
+  // the local joined list, it is erased before Zustand updates.
+  const setGroupsStore = useChatStore((s) => s.setGroups);
+  const setGroups = useCallback((val) => {
+    setGroupsStore((prev) => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      const myGroupsRaw = localStorage.getItem('cipher_my_groups_' + identity?.pk?.slice(0,16));
+      const myGroupIds = new Set(myGroupsRaw ? JSON.parse(myGroupsRaw).map(g => g.id) : []);
+      return (next || []).filter(g => myGroupIds.has(g.id));
+    });
+  }, [identity?.pk, setGroupsStore]);
+  const [reviewTarget, setReviewTarget] = useState(null);
+  const [showFullEmoji, setShowFullEmoji] = useState(false);
+  const { sendDM, subscribeToDMs } = useNIP44DM({ identity });
+  const { sendGroupMessage, subscribeToGroups, pinMessage, unpinMessage, fetchPinnedMessage } = useNIP29Group({ identity });
+  const { sendReaction, fetchReactions } = useReactions({ identity });
+  const { sendReview } = useReputation({ identity });
+  // Fetch reactions when switching chats
+  useEffect(() => {
+    const handleGlobalClick = (e) => {
+      // If the click is NOT inside a message bubble or the emoji popover, close it.
+      const isInsideBubble = e.target.closest('.message-bubble-container');
+      const isInsidePopover = e.target.closest('.emoji-popover-container');
+      
+      if (!isInsideBubble && !isInsidePopover) {
+        setSelectedMessage(null);
+      }
+    };
+    window.addEventListener('click', handleGlobalClick);
+    return () => window.removeEventListener('click', handleGlobalClick);
+  }, [setSelectedMessage]);
+
+  useEffect(() => {
+    if (view === 'dm' && activeDm && dms[activeDm]) {
+      const ids = dms[activeDm].map(m => m.id).filter(Boolean);
+      if (ids.length > 0) fetchReactions(ids);
+    }
+    if (view === 'group' && activeGroup && groupMessages[activeGroup.id]) {
+      const ids = groupMessages[activeGroup.id].map(m => m.id).filter(Boolean);
+      if (ids.length > 0) fetchReactions(ids);
+    }
+  }, [view, activeDm, activeGroup?.id]);
+
+  useEffect(() => {
+    if (activeGroup?.id) {
+      fetchPinnedMessage(activeGroup.id);
+    }
+  }, [activeGroup?.id]);
+
+
+
+  
+  
+  
+  
+  
+  const [lockedUsername, setLockedUsername] = useState(localStorage.getItem('cipher_my_username') || '');
+
+  // Restore @username from relay on login (localStorage is wiped on account switch)
+  useEffect(() => {
+    if (identity?.pk) openDBFor(identity.pk);
+  }, [identity?.pk]);
+
+  useEffect(() => {
+    if (!identity?.pk) return;
+    const fetchMyUsername = async () => {
+      try {
+        const pool = await getAuthenticatedPool(identity);
+        const evs = await queryWithTimeout(pool, generalRelays, {
+          kinds: [30078],
+          authors: [identity.pk],
+          '#d': ['username']
+        });
+        if (evs && evs.length > 0) {
+          const ev = evs[0];
+          const username = ev.tags.find(t => t[0] === 'username')?.[1];
+          if (username && username !== lockedUsername) {
+            setLockedUsername(username);
+            localStorage.setItem('cipher_my_username', username);
+            setMyUsername(username);
+          }
+        }
+      } catch (e) { console.error('Failed to restore username', e); }
+    };
+    fetchMyUsername();
+  }, [identity?.pk]);
+  
+  
+  
+  
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  const scrollRef = useRef(null);
+  const poolRef = useRef(null);
+
+
+   
+  
+  
+  
+  
+  
+  
+   
+  
+  
+  const [replyText, setReplyText] = useState('')
+  
+  const [forwardingMsg, setForwardingMsg] = useState(null)
+  const [showForwardModal, setShowForwardModal] = useState(false)
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+
+  
+  
+  
+  
+  
+  
+  
+  
+
+  useEffect(() => {
+    localStorage.setItem('cipher_my_products', JSON.stringify(myProducts));
+  }, [myProducts]);
+  
+  
+  
+  
+
+  const fetchGroupMembers = async (id) => {
+    try {
+      const pool = await getAuthenticatedPool(identity);
+      const evs = await queryWithTimeout(pool, groupRelays, { kinds: [39002], '#d': [id], '#h': [id] });
+      if (evs.length) {
+        const t = evs[0].tags.filter(x => x[0] === 'p');
+        const m = t.map(x => ({ pubkey: x[1], role: x[2] || 'member' }));
+        fetchProfilesForPubkeys(m.map(x => x.pubkey)); // Fetch profiles for members
+        if (!m.find(x => x.pubkey === identity.pk)) {
+          m.push({ pubkey: identity.pk, role: activeGroup?.creator === identity.pk ? 'admin' : 'member' });
+        }
+        setGroupMembers(m);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    if (showGroupInfo && activeGroup) {
+      fetchGroupMembers(activeGroup.id);
+    }
+  }, [showGroupInfo, activeGroup]);
+
+
+  // Send typing indicator in DMs
+  useEffect(() => {
+    if (!newMessage.trim() || view !== 'dm' || !activeDm || !identity.sk) return;
+    
+    const timer = setTimeout(async () => {
+      try {
+        const { finalizeEvent, nip44 } = await import('nostr-tools');
+        const pool = await getAuthenticatedPool(identity);
+        const shared = nip44.v2.utils.getConversationKey(identity.sk, activeDm);
+        const encrypted = nip44.v2.encrypt(JSON.stringify({ type: 'typing' }), shared);
+        
+        const ev = finalizeEvent({
+          kind: 4, // Use kind 4 so strict relays accept it
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [['p', activeDm]],
+          content: encrypted
+        }, identity.sk);
+        
+        pool.publish(generalRelays, ev);
+      } catch (e) {
+        // Silently fail typing indicators so we don't break the app
+      }
+    }, 200); // Wait 200ms to send (feels instant)
+    
+    return () => clearTimeout(timer);
+  }, [newMessage, view, activeDm, identity.sk]);
+
+
+
+  // Send typing indicator in Groups
+  useEffect(() => {
+    if (!newMessage.trim() || view !== 'group' || !activeGroup || !identity.sk) return;
+    
+    const timer = setTimeout(async () => {
+      try {
+        const { finalizeEvent } = await import('nostr-tools');
+        const pool = await getAuthenticatedPool(identity);
+        
+        const typingPayload = JSON.stringify({ type: 'typing' });
+        const ev = finalizeEvent({
+          kind: 9,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [['h', activeGroup.id]],
+          content: typingPayload
+        }, identity.sk);
+        
+        pool.publish(groupRelays, ev);
+      } catch (e) {}
+    }, 200);
+    
+    return () => clearTimeout(timer);
+  }, [newMessage, view, activeGroup, identity.sk]);
+
+  // Clean up typing users older than 2.5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      
+      setTypingUsers(prev => {
+        const next = { ...prev };
+        let changed = false;
+        for (const pk in next) {
+          if (now - next[pk] > 2500) { delete next[pk]; changed = true; }
+        }
+        return changed ? next : prev;
+      });
+
+      setGroupTypingUsers(prev => {
+        const next = { ...prev };
+        let changed = false;
+        for (const pk in next) {
+          if (now - next[pk] > 2500) { delete next[pk]; changed = true; }
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Force fetch profiles for active group members
+  useEffect(() => {
+    if (activeGroup && groupMessages[activeGroup.id]) {
+      const pks = new Set(groupMessages[activeGroup.id].map(m => m.pubkey));
+      if (pks.size > 0) fetchProfilesForPubkeys([...pks]);
+    }
+  }, [activeGroup, groupMessages]);
+
+
+  
+  useEffect(() => {
+    if (!identity?.sk) return;
+    fetchGroups().catch((e) => console.error('[init] fetchGroups:', e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity?.sk]);
+
+
+
+  const sortMessages = (a, b) => {
+    // Prefer local millisecond timestamp, fallback to relay seconds
+    const timeA = a.local_timestamp || (a.timestamp * 1000);
+    const timeB = b.local_timestamp || (b.timestamp * 1000);
+    if (timeA !== timeB) return timeA - timeB;
+    return (a.id || '').localeCompare(b.id || '');
+  };
+
+  const canPost = !activeGroup?.isChannel || activeGroup?.creator === identity?.pk;
+
+
+  const handleMessageAction = (action, msg) => {
+    console.log("🚨 HANDLE ACTION FIRED:", action, msg?.id);
+    if (action === 'can_pin') return activeGroup && activeGroup.creator === identity.pk;
+    if (action === 'reply') { setReplyingTo(msg); setSelectedMessage(null); }
+    if (action === 'copy') { copyToClipboard(msg.data?.message || msg.rawContent || ''); setSelectedMessage(null); setToast({ type: 'success', message: 'Text copied' }); }
+    if (action === 'copy_link') { copyToClipboard(`${window.location.origin}?msg=${msg.id}`); setSelectedMessage(null); setToast({ type: 'success', message: 'Link copied' }); }
+    if (action === 'forward') { setToast({ type: 'success', message: 'Forwarding coming soon' }); setSelectedMessage(null); }
+    if (action === 'delete') { deleteMessage(msg.id); setSelectedMessage(null); }
+    if (action === 'report') { setToast({ type: 'error', message: 'Message reported' }); setSelectedMessage(null); }
+    if (action === 'confirm_delivery') {
+      setSelectedMessage(null);
+      const vendorPk = activeDm; // FIX: msg.pubkey is the BUYER, activeDm is the VENDOR
+      const d = msg.data || {};
+      
+      setToast({ type: 'success', message: 'Confirming delivery...' });
+
+      (async () => {
+        try {
+          const updatedMsg = { ...msg, data: { ...d, status: 'completed' } };
+          
+          // Update UI instantly
+          setDms(prev => {
+            const chatMsgs = prev[activeDm] || [];
+            return { ...prev, [activeDm]: chatMsgs.map(m => m.id === msg.id ? updatedMsg : m) };
+          });
+
+          // Save to Dexie (now works because we fixed the schema)
+          await db.messages.put({ ...updatedMsg, chatId: activeDm });
+
+          // Send DM to Vendor
+          await sendDM(vendorPk, { 
+            type: 'order_update', 
+            orderId: msg.id, 
+            productName: d.productName, 
+            status: 'completed' 
+          });
+
+          // Publish 10006 in background
+          const { finalizeEvent } = await import('nostr-tools');
+          const pool = await getAuthenticatedPool(identity);
+          const ev = finalizeEvent({
+            kind: 10006,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [
+              ['p', String(vendorPk || '')],
+              ['e', String(msg.id || ''), '', 'order'],
+              ['amount', String(d.amountFiat || '0')],
+              ['currency', String(d.currency || 'USD')],
+              ['crypto_amount', String(d.amountCrypto || '0')],
+              ['order', String(d.productName || 'Item')]
+            ],
+            content: `Confirmed delivery of ${d.productName || 'Item'}`
+          }, identity.sk);
+          Promise.allSettled(pool.publish(generalRelays, ev)).catch(console.error);
+          
+          setToast({ type: 'success', message: 'Delivery confirmed!' });
+        } catch (err) {
+          console.error("Confirm delivery error:", err);
+          setToast({ type: 'error', message: 'Error: ' + err.message });
+        }
+      })();
+    }
+    if (action === 'pin' && activeGroup) { pinMessage(activeGroup.id, msg.id); setSelectedMessage(null); setToast({ type: 'success', message: 'Pinned!' }); }
+  };
+
+  const fetchChats = async (showLoader = false) => {
+    if (showLoader) setLoading(true);
+    try {
+      const pool = await getAuthenticatedPool(identity)
+      
+      // Use Promise.all to fetch everything in parallel so it's faster
+      const [sentDms, recvDms, groupMetaEvents, allMsgs, reactionsEvents, delEvents] = await Promise.all([
+        queryWithTimeout(pool, generalRelays, { kinds: [4], authors: [identity.pk], limit: 50 }),
+        queryWithTimeout(pool, generalRelays, { kinds: [4], '#p': [identity.pk], limit: 50 }),
+        queryWithTimeout(pool, groupRelays, { kinds: [39000, 9002], limit: 100 }),
+        queryWithTimeout(pool, groupRelays, { kinds: [9], '#h': groups.map(g => g.id), limit: 200 }),
+        queryWithTimeout(pool, generalRelays, { kinds: [7], limit: 500 }),
+        queryWithTimeout(pool, generalRelays, { kinds: [5], limit: 100 })
+      ]);
+
+      const allDms = Array.from(new Map([...sentDms, ...recvDms].map(ev => [ev.id, ev])).values())
+      
+      const { nip44 } = await import('nostr-tools')
+      for (const ev of allDms) {
+        try {
+          const isSender = ev.pubkey === identity.pk
+          const counterparty = isSender ? ev.tags.find(t => t[0] === 'p')?.[1] : ev.pubkey
+          if (!counterparty) continue
+          
+          const shared = nip44.v2.utils.getConversationKey(identity.sk, counterparty)
+          const text = nip44.v2.decrypt(ev.content, shared)
+          let data = {}; try { data = JSON.parse(text) } catch (e) { data = { type: 'text', message: text } }
+          
+          // ✅ FIX: Ignore system events so they don't pollute the chat list
+          if (data.type === 'typing' || data.type === 'read' || data.type === 'pin') continue;
+
+          const replyTag = ev.tags.find(t => t[0] === 'e' && t[3] === 'reply')
+          const clientId = ev.tags.find(t => t[0] === 'client')?.[1]
+
+          await saveMessage(counterparty, {
+            id: ev.id, clientId, isSender, timestamp: ev.created_at, data, pubkey: ev.pubkey, replyTo: replyTag ? replyTag[1] : null,
+            isGroup: false // ✅ Explicitly mark as DM
+          });
+        } catch (e) {}
+      }
+
+      const uniqueGroups = Array.from(new Map(groupMetaEvents.map(ev => {
+        const hTag = ev.tags.find(t => t[0] === 'h')?.[1] || ev.tags.find(t => t[0] === 'd')?.[1];
+        return [hTag, ev]
+      })).values())
+      
+      const parsedGroups = uniqueGroups.map(ev => {
+        const getTag = (t) => ev.tags.find(x => x[0] === t)?.[1];
+        return {
+          id: getTag('h') || getTag('d'),
+          name: getTag('name') || 'Unnamed',
+          about: getTag('about') || '',
+          isChannel: ev.tags.some(t => t[0] === 'channel' || t[0] === 'broadcast'),
+          creator: ev.pubkey
+        }
+      }).filter(g => g.id)
+      const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+      const allGroupsMap = new Map(localGroups.map(g => [g.id, g]));
+      
+      parsedGroups.forEach(pg => {
+        if (allGroupsMap.has(pg.id)) {
+          // Overwrite the local group with the real metadata (fixes the "Group d1c..." name)
+          allGroupsMap.set(pg.id, { ...allGroupsMap.get(pg.id), ...pg });
+        } else {
+          allGroupsMap.set(pg.id, pg);
+        }
+      });
+      
+      const finalGroupsList = Array.from(allGroupsMap.values());
+      setGroups(finalGroupsList);
+
+      for (const ev of allMsgs) {
+        const groupId = ev.tags.find(t => t[0] === 'e')?.[1]
+        if (!groupId) continue
+        const replyTag = ev.tags.find(t => t[0] === 'e' && t[3] === 'reply')
+        const clientId = ev.tags.find(t => t[0] === 'client')?.[1]
+        
+        await saveMessage(groupId, {
+          id: ev.id, clientId, isSender: ev.pubkey === identity.pk, pubkey: ev.pubkey, timestamp: ev.created_at, rawContent: ev.content, replyTo: replyTag ? replyTag[1] : null,
+          isGroup: true // ✅ Explicitly mark as Group
+        });
+      }
+
+      
+      const reactionMap = {}
+      reactionsEvents.forEach(ev => {
+        const targetId = ev.tags.find(t => t[0] === 'e')?.[1]
+        if (targetId) {
+          if (!reactionMap[targetId]) reactionMap[targetId] = []
+          if (!reactionMap[targetId].find(r => r.pubkey === ev.pubkey && r.emoji === ev.content)) {
+            reactionMap[targetId].push({ emoji: ev.content, pubkey: ev.pubkey })
+          }
+        }
+      })
+      setReactions(reactionMap)
+
+      const deleted = new Set()
+      delEvents.forEach(ev => {
+        if (ev.pubkey === identity.pk) {
+          const targetId = ev.tags.find(t => t[0] === 'e')?.[1]
+          if (targetId) deleted.add(targetId)
+        }
+      })
+      setDeletedMsgs(deleted)
+
+      // Load from Dexie
+      const allDbMsgs = await db.messages.toArray()
+      
+      // Calculate unread counts
+      const reads = await db.chatReads.toArray();
+      const readMap = {};
+      reads.forEach(r => readMap[r.chatId] = r.lastRead);
+      
+      const counts = {};
+      allDbMsgs.forEach(msg => {
+        if (!msg.isSender) {
+          const lastRead = readMap[msg.chatId] || 0;
+          if (msg.timestamp > lastRead) {
+            counts[msg.chatId] = (counts[msg.chatId] || 0) + 1;
+          }
+        }
+      });
+      setUnreadCounts(counts);
+
+      const finalDms = {}
+      const finalGroups = {}
+      
+      for (const msg of allDbMsgs) {
+        if (msg.isGroup === true) {
+          if (!finalGroups[msg.chatId]) finalGroups[msg.chatId] = []
+          finalGroups[msg.chatId].push(msg)
+        } else {
+          if (!finalDms[msg.chatId]) finalDms[msg.chatId] = []
+          finalDms[msg.chatId].push(msg)
+        }
+      }
+
+      Object.keys(finalDms).forEach(k => finalDms[k].sort(sortMessages))
+      Object.keys(finalGroups).forEach(k => finalGroups[k].sort(sortMessages))
+
+      setDms(finalDms)
+      setGroupMessages(finalGroups)
+
+      // Kick off profile loading for all DM counterparties
+      const dmPubkeys = Object.keys(finalDms);
+      if (dmPubkeys.length > 0) {
+        fetchProfilesForPubkeys(dmPubkeys);
+      }
+
+    } catch (err) { 
+      console.error("Fetch error:", err) 
+    } finally { 
+      setLoading(false) 
+    }
+  }
+
+  // ✅ SILENT BACKGROUND POLLER (Safety net for dropped WebSockets)
+
+  const fetchProfilesForPubkeys = async (pubkeys) => {
+    if (!pubkeys || pubkeys.length === 0) return;
+    try {
+      // 1. Load whatever we already have cached in Dexie
+      const cached = await db.profiles.bulkGet(pubkeys);
+      const cachedMap = {};
+      cached.forEach(p => { if (p) cachedMap[p.pubkey] = p; });
+      setProfiles(prev => ({ ...prev, ...cachedMap }));
+
+      // 2. Fetch the rest from relays
+      const missing = pubkeys.filter(pk => !cachedMap[pk]);
+      if (missing.length === 0) return;
+
+      const pool = await getAuthenticatedPool(identity);
+      const allRelays = [...new Set([...generalRelays, ...groupRelays])];
+      const events = await queryWithTimeout(
+        pool,
+        allRelays,
+        { kinds: [0], authors: missing },
+        4000
+      );
+
+      const fresh = {};
+      for (const ev of events) {
+        try {
+          const meta = JSON.parse(ev.content);
+          const profile = {
+            pubkey: ev.pubkey,
+            name: meta.name || meta.display_name || ev.pubkey.slice(0, 8),
+            displayName: meta.display_name || meta.name || ev.pubkey.slice(0, 8),
+            picture: meta.picture || null,
+            about: meta.about || ''
+          };
+          fresh[ev.pubkey] = profile;
+          await db.profiles.put(profile);
+        } catch (e) {}
+      }
+      if (Object.keys(fresh).length > 0) {
+        setProfiles(prev => ({ ...prev, ...fresh }));
+        console.log(`[profiles] fetched ${Object.keys(fresh).length} fresh profiles`);
+      }
+    } catch (err) {
+      console.error("[profiles] fetch failed:", err);
+    }
+  };
+
+    useEffect(() => {
+    if (!identity.sk) return;
+    
+    let cleanupDMs = null;
+    let cleanupGroups = null;
+    
+    const setup = async () => {
+      const pool = await getAuthenticatedPool(identity);
+      poolRef.current = pool;
+      const since = Math.floor(Date.now() / 1000) - 30;
+      
+      await fetchChats(true);
+      
+      // Subscribe to DMs
+      cleanupDMs = subscribeToDMs(since);
+      
+      // Subscribe to Groups
+      const groupIds = groups.map(g => g.id);
+      if (groupIds.length > 0) {
+        cleanupGroups = subscribeToGroups(groupIds, since);
+      }
+    };
+    
+    setup();
+    
+    return () => {
+      if (cleanupDMs) cleanupDMs();
+      if (cleanupGroups) cleanupGroups();
+    };
+  }, [identity.sk, identity.pk, groups.length])
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [dms, activeDm, groupMessages, activeGroup, reactions, replyingTo, typingUsers])
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingImage(true)
+    setToast({ type: 'success', message: "Stripping metadata & uploading..." })
+    try {
+      // 🛡️ Strip EXIF/GPS data
+      const cleanFile = await stripImageMetadata(file);
+      
+      const blob = await uploadToBlossom(cleanFile, {
+        signer: {
+          getPublicKey: async () => identity.pk,
+          signEvent: async (event) => {
+            const { finalizeEvent } = await import('nostr-tools')
+            return finalizeEvent(event, identity.sk)
+          }
+        },
+      })
+      await sendMessage(blob.url, true)
+      setToast({ type: 'success', message: "Image sent!" })
+    } catch (err) {
+      console.error(err)
+      setToast({ type: 'error', message: "Image upload failed" })
+    } finally {
+      setUploadingImage(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = mediaRecorder
+      audioChunksRef.current = []
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data)
+      }
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        const file = new File([audioBlob], 'voice_note.webm', { type: 'audio/webm' })
+        
+        setUploadingImage(true)
+        setToast({ type: 'success', message: "Uploading voice note..." })
+        
+        try {
+          const blob = await uploadToBlossom(file, {
+            signer: {
+              getPublicKey: async () => identity.pk,
+              signEvent: async (event) => {
+                const { finalizeEvent } = await import('nostr-tools')
+                return finalizeEvent(event, identity.sk)
+              }
+            },
+          })
+          await sendMessage('', false, blob.url)
+          setToast({ type: 'success', message: "Voice note sent!" })
+        } catch (err) {
+          console.error(err)
+          setToast({ type: 'error', message: "Voice upload failed" })
+        } finally {
+          setUploadingImage(false)
+        }
+      }
+
+      mediaRecorder.start()
+      setIsRecording(true)
+    } catch (err) {
+      console.error(err)
+      setToast({ type: 'error', message: "Microphone access denied" })
+    }
+  }
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop()
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop())
+      setIsRecording(false)
+    }
+  }
+
+  const sendMessage = async (text, isImage = false, audioUrl = null) => {
+    if (!text.trim() && !audioUrl) return
+    const tempId = `temp-${Date.now()}`
+    
+    let msgPayload = { type: 'text', message: text }
+    if (isImage) msgPayload = { type: 'image', url: text, metadata_stripped: true }
+    if (audioUrl) msgPayload = { type: 'audio', url: audioUrl }
+    
+    const replyId = replyingTo ? replyingTo.id : null
+    
+    // ✅ STRICT ROUTING: Only use activeDm if we are actually in the DM view
+    const isDmView = view === 'dm';
+    const chatId = isDmView ? activeDm : activeGroup?.id;
+
+    const newMsg = { 
+      id: tempId, clientId: tempId, isSender: true, pubkey: identity.pk, 
+      timestamp: Math.floor(Date.now() / 1000), local_timestamp: Date.now(), replyTo: replyId 
+    }
+    
+    if (isDmView && activeDm) {
+      newMsg.data = msgPayload;
+      newMsg.isGroup = false; // ✅ Explicitly tag as DM
+      setDms(prev => ({ ...prev, [activeDm]: [...(prev[activeDm] || []), newMsg].sort(sortMessages) }))
+    } else if (activeGroup) {
+        const result = await sendGroupMessage(activeGroup.id, msgPayload, tempId, replyId);
+        if (!result.success) {
+          setToast({ type: 'error', message: 'Failed to send to group' });
+        }
+      }
+
+    await saveMessage(chatId, newMsg)
+
+    setReplyText(''); setReplyingTo(null); setShowEmojiPicker(false);
+
+    try {
+      const pool = await getAuthenticatedPool(identity)
+      const { finalizeEvent } = await import('nostr-tools')
+      const { nip44 } = await import('nostr-tools')
+
+if (activeDm) {
+        const result = await sendDM(activeDm, msgPayload, tempId, replyId);
+        if (!result.success) {
+          setToast({ type: 'error', message: 'Failed to send: ' + (result.error || 'unknown') });
+        }
+      } else if (activeGroup) {
+        const tags = [['h', activeGroup.id], ['client', tempId]]
+        if (replyId) tags.push(['e', replyId, '', 'reply'])
+        const { finalizeEvent } = await import('nostr-tools');
+        const event = finalizeEvent({ kind: 9, created_at: Math.floor(Date.now() / 1000), tags, content: JSON.stringify(msgPayload) }, identity.sk);
+        const results = await Promise.allSettled(pool.publish(groupRelays, event));
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled') console.log(`[sendMessage] ${groupRelays[i]} OK:`, r.value);
+          else console.error(`[sendMessage] ${groupRelays[i]} REJECTED:`, r.reason);
+        });
+      }
+    } catch (err) { 
+      console.error("Full Encryption/Send Error:", err);
+      setToast({ type: 'error', message: "Failed to send: " + err.message }) 
+    }
+  }
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return
+    setIsSearching(true)
+    setSearchResults([])
+
+    let rawQuery = searchQuery.trim()
+
+    // --- LAYER 0: UNIQUE USERNAME LOOKUP (kind: 10003) ---
+    if (rawQuery.startsWith('@')) {
+      const usernameToFind = rawQuery.slice(1).toLowerCase();
+      if (usernameToFind.length < 3) {
+        setToast({ type: 'error', message: 'Username must be at least 3 characters' });
+        setIsSearching(false);
+        return;
+      }
+      
+      try {
+        const pool = await getAuthenticatedPool(identity);
+        const allSearchRelays = ['wss://relay.primal.net', 'wss://groups.aegispayhq.com'];
+        
+        // Query using #t filter (hashtag, universally supported)
+        // Fetch all recent 10003 events and filter locally (bulletproof)
+        const events = await queryWithTimeout(pool, allSearchRelays, { 
+          kinds: [10003], 
+          limit: 100
+        }, 4000);
+        
+        console.log('[Username Search] Fetched', events.length, 'total kind 10003 events');
+        
+        const matches = events.filter(ev => {
+          const usernameTag = ev.tags.find(t => t[0] === 'username')?.[1];
+          const tTag = ev.tags.find(t => t[0] === 't' && t[1] === 'cipher_username_' + usernameToFind);
+          return usernameTag === usernameToFind || tTag;
+        });
+        
+        if (matches.length > 0) {
+          const match = matches[0];
+          setSearchResults([{ 
+            type: 'user', 
+            pubkey: match.pubkey, 
+            name: '@' + usernameToFind, 
+            picture: null
+          }]);
+        } else {
+          setSearchResults([]);
+          setToast({ type: 'error', message: '@' + usernameToFind + ' not found. Ask them to re-save their profile.' });
+        }
+      } catch (err) {
+        console.error("Username search failed:", err);
+        setToast({ type: 'error', message: 'Search failed' });
+      } finally {
+        setIsSearching(false);
+      }
+      return;
+    }
+
+    // --- LAYER A: URL EXTRACTION (pasted invite links) ---
+    try {
+      if (rawQuery.startsWith('http')) {
+        const url = new URL(rawQuery)
+        const gp = url.searchParams.get('group')
+        const np = url.searchParams.get('naddr')
+        if (gp) {
+          rawQuery = gp
+          console.log('[search] extracted group ID from URL:', rawQuery)
+        } else if (np) {
+          const { nip19 } = await import('nostr-tools')
+          const d = nip19.decode(np)
+          if (d.type === 'naddr') {
+            rawQuery = d.data.identifier
+            console.log('[search] extracted group ID from naddr:', rawQuery)
+          }
+        }
+      }
+    } catch (e) { console.warn('[search] URL parse failed', e) }
+
+    rawQuery = rawQuery.replace(/^@/, '')
+    if (/^[0-9a-f]{64,}$/i.test(rawQuery)) {
+      rawQuery = rawQuery.slice(0, 64)
+    }
+
+    console.log("Searching for:", rawQuery)
+
+    // --- LAYER B: INSTANT 16-CHAR GROUP ID (before ANY await) ---
+    if (rawQuery.length >= 12 && rawQuery.length <= 20 && /^[a-z0-9_-]+$/i.test(rawQuery) && !rawQuery.includes(' ')) {
+      console.log('[search] instant group ID match:', rawQuery)
+      setSearchResults([{
+        type: 'group',
+        id: rawQuery,
+        name: 'Group ' + rawQuery,
+        isChannel: false,
+        creator: ''
+      }])
+      setIsSearching(false)
+      return
+    }
+
+    const isNpub = rawQuery.startsWith('npub1');
+    const isHex = /^[0-9a-f]{64}$/i.test(rawQuery);
+    const isPartialHex = /^[0-9a-f]{10,63}$/i.test(rawQuery);
+    const isNip05 = rawQuery.includes('@');
+
+    if (isPartialHex) {
+      setToast({ type: 'error', message: "Hex public keys must be exactly 64 characters. Yours is " + rawQuery.length + " characters." });
+      setIsSearching(false);
+      return;
+    }
+    
+    try {
+      const { SimplePool, nip19 } = await import('nostr-tools')
+      const pool = new SimplePool({ enablePing: true, enableReconnect: true })
+
+      // --- LAYER 1: INSTANT LOCAL CACHE ---
+      const localMatches = await db.profiles.filter(p => 
+        (p.name && p.name.toLowerCase().includes(rawQuery.toLowerCase())) || 
+        (p.displayName && p.displayName.toLowerCase().includes(rawQuery.toLowerCase()))
+      ).toArray();
+
+      if (localMatches.length > 0) {
+        setSearchResults(localMatches.map(p => ({ type: 'user', pubkey: p.pubkey, name: p.displayName, picture: p.picture })));
+        setIsSearching(false);
+        return;
+      }
+
+      // --- LAYER 2: NIP-05 LOOKUP ---
+      if (isNip05 && !isNpub) {
+        const [name, domain] = rawQuery.split('@');
+        try {
+          const res = await fetch(`https://${domain}/.well-known/nostr.json?name=${name}`);
+          const data = await res.json();
+          const targetPubkey = data.names?.[name];
+          if (targetPubkey) {
+            setSearchResults([{ type: 'user', pubkey: targetPubkey, name: name, picture: null }]);
+            setIsSearching(false);
+            return;
+          }
+        } catch (e) { console.warn("NIP-05 lookup failed, continuing..."); }
+      }
+
+
+      // --- LAYER 3: DIRECT NPUB/HEX LOOKUP ---
+      if (isNpub || isHex) {
+        let targetPubkey = rawQuery;
+        
+        if (isNpub) {
+          const decoded = nip19.decode(rawQuery);
+          targetPubkey = decoded.data;
+          // FIX: nostr-tools sometimes returns a Uint8Array instead of a hex string
+          if (typeof targetPubkey !== 'string') {
+            targetPubkey = Array.from(targetPubkey).map(b => b.toString(16).padStart(2, '0')).join('');
+          }
+        }
+
+        // Set the result IMMEDIATELY so the UI updates instantly, even if the relay is slow
+        setSearchResults([{ type: 'user', pubkey: targetPubkey, name: targetPubkey.slice(0,8), picture: null }]);
+        
+        // Then try to fetch their actual profile to get their name/picture
+        const profileEvents = await queryWithTimeout(
+          pool, 
+          ['wss://purplepag.es', 'wss://relay.primal.net'], 
+          { kinds: [0], authors: [targetPubkey] }, 
+          4000
+        );
+
+        if (profileEvents.length > 0) {
+          try {
+            const p = JSON.parse(profileEvents[0].content);
+            setSearchResults([{ 
+              type: 'user', 
+              pubkey: targetPubkey, 
+              name: p.display_name || p.name || targetPubkey.slice(0,8), 
+              picture: p.picture 
+            }]);
+          } catch (e) {}
+        }
+        
+        setIsSearching(false);
+        return;
+      }
+
+      // --- LAYER 4: VERTEX DVM PROFILE SEARCH (NEW) ---
+      try {
+        const { finalizeEvent } = await import('nostr-tools');
+        const dvmPool = new SimplePool();
+        // 1. Create a request event (kind 5315)
+        const requestEvent = finalizeEvent({
+          kind: 5315,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [['param', 'search', rawQuery], ['param', 'limit', '10']],
+          content: ''
+        }, identity.sk);
+
+        // 2. Publish to Vertex
+        await Promise.allSettled(dvmPool.publish(['wss://relay.vertexlab.io'], requestEvent));
+
+        // 3. Fetch the response (kind 6315)
+        const responseEvents = await Promise.race([
+          dvmPool.querySync(['wss://relay.vertexlab.io'], { kinds: [6315], '#e': [requestEvent.id] }),
+          new Promise(resolve => setTimeout(() => resolve([]), 4000)) // 4s timeout
+        ]);
+
+        if (responseEvents.length > 0) {
+          const responseEvent = responseEvents[0];
+          const pubkeys = JSON.parse(responseEvent.content).map(p => p.pubkey);
+          
+          if (pubkeys.length > 0) {
+            // Fetch the actual profiles for these pubkeys
+            const profileEvents = await pool.querySync(['wss://relay.primal.net'], { kinds: [0], authors: pubkeys });
+            const profiles = profileEvents.map(ev => {
+              const data = JSON.parse(ev.content);
+              return { type: 'user', pubkey: ev.pubkey, name: data.display_name || data.name || ev.pubkey.slice(0, 8), picture: data.picture };
+            });
+            setSearchResults(profiles);
+            setIsSearching(false);
+            return;
+          }
+        }
+      } catch (dvmError) {
+        console.warn("Vertex DVM search failed, falling back to NIP-50...", dvmError);
+      }
+
+      // --- LAYER 5: STANDARD NIP-50 FALLBACK ---
+      const publicSearchRelays = ['wss://relay.vertexlab.io', 'wss://relay.noswhere.com', 'wss://relay.primal.net'];
+      const events = await Promise.race([
+        Promise.all([
+          pool.querySync(publicSearchRelays, { kinds: [0, 41], search: rawQuery, limit: 30 }),
+          pool.querySync(['wss://groups.aegispayhq.com'], { kinds: [9002], limit: 200 })
+        ]).then(res => [...res[0], ...res[1]]),
+        new Promise(resolve => setTimeout(() => resolve([]), 4000))
+      ]);
+
+      let matchedProfiles = [];
+      let matchedGroups = [];
+
+      events.forEach(ev => {
+        if (ev.kind === 0) {
+          try {
+            const d = JSON.parse(ev.content);
+            matchedProfiles.push({ type: 'user', pubkey: ev.pubkey, name: d.display_name || d.name || ev.pubkey.slice(0,8), picture: d.picture });
+          } catch(e) {}
+        } else if (ev.kind === 41) {
+          try {
+            const d = JSON.parse(ev.content);
+            matchedGroups.push({ type: 'group', id: ev.tags.find(t=>t[0]==='d')?.[1], name: d.name, isChannel: d.isChannel, creator: ev.pubkey });
+          } catch(e) {}
+        } else if (ev.kind === 39000 || ev.kind === 9002) {
+          const getTag = (t) => ev.tags.find(x => x[0] === t)?.[1];
+          const groupId = getTag('h') || getTag('d');
+          const groupName = getTag('name');
+          if (groupId && groupName && groupName.toLowerCase().includes(rawQuery.toLowerCase())) {
+            matchedGroups.push({ type: 'group', id: groupId, name: groupName, isChannel: false, creator: ev.pubkey });
+          }
+        }
+      });
+
+      // Fallback: If the user pastes a 16-character Group ID, let them join it directly
+      if (rawQuery.length >= 12 && rawQuery.length <= 20 && !rawQuery.includes(' ')) {
+        if (!matchedGroups.find(g => g.id === rawQuery)) {
+          matchedGroups.push({ type: 'group', id: rawQuery, name: "Group " + rawQuery, isChannel: false, creator: "" });
+        }
+      }
+
+      const uniqueUsers = Array.from(new Map(matchedProfiles.map(p => [p.pubkey, p])).values());
+      const uniqueGroups = Array.from(new Map(matchedGroups.map(g => [g.id, g])).values());
+      
+      setSearchResults([...uniqueUsers.slice(0, 10), ...uniqueGroups.slice(0, 10)]);
+
+    } catch (err) { 
+      console.error("Search failed entirely:", err); 
+    } finally { 
+      setIsSearching(false); 
+    }
+  }
+
+
+  const joinGroupById = async (groupId, passedName = null) => {
+    if (!groupId) return;
+    setIsSearching(true);
+    let realName = passedName || 'Unnamed Group';
+
+    try {
+      const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+      const localMatch = localGroups.find(g => g.id === groupId);
+
+      if (!passedName && localMatch && localMatch.name && localMatch.name !== 'Unnamed Group') {
+        realName = localMatch.name;
+      } else if (!passedName) {
+        try {
+          const pool = await getAuthenticatedPool(identity);
+          const events = await queryWithTimeout(pool, groupRelays, { kinds: [9002], limit: 200 }, 3000);
+          const match = events.find(ev => ev.tags.find(t => t[0] === 'h')?.[1] === groupId);
+          if (match) {
+            const nameTag = match.tags.find(t => t[0] === 'name')?.[1];
+            if (nameTag) realName = nameTag;
+          }
+        } catch (e) {}
+      }
+
+      if (realName === 'Unnamed Group') {
+        const userInput = window.prompt("What is this group called?", "");
+        if (userInput && userInput.trim()) realName = userInput.trim();
+      }
+
+      const newGroupObj = { id: groupId, name: realName, isChannel: false, creator: '' };
+      
+      const idx = localGroups.findIndex(g => g.id === groupId);
+      if (idx === -1) localGroups.push(newGroupObj);
+      else localGroups[idx].name = realName;
+      localStorage.setItem('cipher_my_groups', JSON.stringify(localGroups));
+      
+      setGroups(prev => [newGroupObj, ...(prev || []).filter(g => g.id !== groupId)]);
+      openChat('group', groupId, newGroupObj);
+      setToast({ type: 'success', message: 'Joined group' });
+    } catch (err) {
+      console.error('[joinGroupById] error:', err);
+    } finally {
+      setIsSearching(false);
+      if (window.location.search.length > 0) window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  };
+
+
+
+
+
+
+
+  // FIX: Clear old account data when switching accounts to prevent DM leaks
+  useEffect(() => {
+    // Wait until the identity is fully loaded before checking
+    if (!identity?.pk) return; 
+    
+    const lastUser = localStorage.getItem('cipher_last_user');
+    if (lastUser && lastUser !== identity.pk) {
+      useChatStore.setState({ dms: {}, groups: [], groupMessages: {}, profiles: {}, unreadCounts: {}, reactions: {} });
+      console.warn("Switching accounts! Wiping old local data...");
+      db.messages.clear().catch(console.error);
+      db.chatReads.clear().catch(console.error);
+      localStorage.removeItem('cipher_my_groups');
+    }
+    localStorage.setItem('cipher_last_user', identity.pk);
+  }, [identity?.pk]);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const joinId = urlParams.get('group') || urlParams.get('join') || urlParams.get('g');
+    const joinName = urlParams.get('name');
+    if (joinId && identity?.pk) { 
+      console.log("[URL] Found group invite link for:", joinId);
+      joinGroupById(joinId, joinName); 
+    }
+  }, [identity?.pk]);
+
+
+
+  const handleNaddr = async (naddr) => {
+    try {
+      const { nip19 } = await import('nostr-tools');
+      const decoded = nip19.decode(naddr);
+      if (decoded.type === 'naddr' && decoded.data.kind === 39000) {
+        const groupId = decoded.data.identifier;
+        const relayUrl = decoded.data.relays?.[0] || 'wss://groups.aegispayhq.com';
+        console.log("[handleNaddr] Decoded group:", groupId, "on relay:", relayUrl);
+        await joinGroupById(groupId);
+      }
+    } catch (e) {
+      console.error("[handleNaddr] Failed to decode naddr:", e);
+    }
+  };
+
+  const leaveGroup = async (groupId) => {
+    if (!window.confirm("Are you sure you want to leave this group?")) return;
+    
+    try {
+      const { finalizeEvent } = await import('nostr-tools');
+      const pool = await getAuthenticatedPool(identity);
+      // NIP-29 Leave Group (kind 9022)
+      const leaveEv = finalizeEvent({
+        kind: 9022, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId]], content: ""
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(groupRelays, leaveEv));
+    } catch (e) {
+      console.error("Failed to send leave event to relay:", e);
+    }
+
+    // Remove from localStorage
+    const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+    const updated = localGroups.filter(g => g.id !== groupId);
+    localStorage.setItem('cipher_my_groups', JSON.stringify(updated));
+    
+    // Update state and go back to list
+    if (typeof setGroups === 'function') setGroups(updated);
+    setView('list');
+    if (typeof fetchChats === 'function') fetchChats();
+  };
+
+
+  
+  // Trigger fetch when Group Info opens
+  
+  const fetchGroups = async () => {
+    try {
+      const pool = await getAuthenticatedPool(identity);
+      const events = await queryWithTimeout(pool, groupRelays, { kinds: [39000, 9002], limit: 200 });
+      
+      const parsed = events.map(ev => {
+        const tag = (n) => ev.tags.find((t) => t[0] === n)?.[1];
+        const id = tag('d') || tag('h') || ev.id;
+        return { id, name: tag('name') || id, about: tag('about') || '', kind: 'group', raw: ev };
+      });
+
+      const uniqueGroups = Array.from(new Map(parsed.map(g => [g.id, g])).values());
+      
+      const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+      const allGroups = [...uniqueGroups];
+      localGroups.forEach(lg => {
+        if (!allGroups.find(g => g.id === lg.id)) allGroups.push(lg);
+      });
+      
+      setGroups(allGroups);
+      return allGroups;
+    } catch (e) { 
+      console.error("[fetchGroups] NDK failed:", e); 
+      return []; 
+    }
+  };
+
+
+
+  const createGroup = async (e) => {
+    if (e) e.preventDefault();
+    if (!newGroupName.trim()) return;
+    
+    // Capture the values BEFORE we clear the form
+    const gName = newGroupName;
+    const gAbout = newGroupAbout;
+    const gChannel = isChannel;
+    
+    setShowCreateGroup(false);
+    setShowMenu(false);
+    setNewGroupName(""); 
+    setNewGroupAbout(""); 
+    setIsChannel(false);
+
+    try {
+      const { finalizeEvent } = await import("nostr-tools");
+      const pool = await getAuthenticatedPool(identity);
+      const groupId = (globalThis.crypto?.randomUUID?.() || Date.now().toString()).replace(/-/g, "").slice(0, 16);
+      
+      console.log("[createGroup] groupId:", groupId);
+
+      const createEv = finalizeEvent({
+        kind: 9007, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId], ["name", gName], ["about", gAbout || ""], ["open"], ["p", identity.pk, "admin"]], // <-- Added ["public"]
+        content: "",
+      }, identity.sk);
+      
+      const r9007 = await Promise.allSettled(pool.publish(groupRelays, createEv));
+      let ok = 0;
+      r9007.forEach((r) => { if (r.status === "fulfilled") ok++; });
+      if (!ok) throw new Error("No relay accepted 9007");
+
+      const metaEv = finalizeEvent({
+        kind: 9002, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId], ["name", gName], ["about", gAbout || ""]],
+        content: "",
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(groupRelays, metaEv));
+
+      // Auto-join the group as the creator (kind 9021)
+      const joinEv = finalizeEvent({
+        kind: 9021, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId]], content: "Creator"
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(groupRelays, joinEv));
+
+      const newGroupObj = {
+        id: groupId, name: gName, about: gAbout || "",
+        isChannel: gChannel, creator: identity.pk, members: [identity.pk]
+      };
+
+      const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+      if (!localGroups.find(g => g.id === groupId)) {
+        localGroups.push(newGroupObj);
+        localStorage.setItem('cipher_my_groups', JSON.stringify(localGroups));
+      }
+      setGroups((prev) => [newGroupObj, ...(prev || []).filter(c => c.id !== groupId)]);
+      setToast({ type: 'success', message: 'Group created!' });
+    } catch (err) { 
+      console.error("[createGroup] FAILED:", err); 
+      setToast({ type: 'error', message: 'Failed to create group' });
+    }
+  };;
+
+  const ToastUI = () => toast && (
+    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-surfaceLight border border-white/10 px-5 py-3 rounded-2xl shadow-2xl animate-slide-up flex items-center gap-3">
+      <div className={`w-2 h-2 rounded-full ${toast.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`} />
+      <span className="text-sm font-semibold text-white">{toast.message}</span>
+    </div>
+  )
+
+  const Emojis = ['😀','😂','🥰','😎','😭','🤔','👍','🔥','❤️','🚀','💯','🙏','✨','💀','🤯','🤫','💩','🤝','👀','💸']
+
+
+  const deleteMessage = async (msgId) => {
+    if (!window.confirm("Delete this message?")) return;
+    try {
+      const { finalizeEvent } = await import('nostr-tools');
+      const pool = await getAuthenticatedPool(identity);
+      const ev = finalizeEvent({
+        kind: 5, created_at: Math.floor(Date.now() / 1000),
+        tags: [['e', msgId]], content: 'Deleted'
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(generalRelays, ev));
+      setDeletedMsgs(prev => new Set(prev).add(msgId));
+      setToast({ type: 'success', message: 'Message deleted' });
+    } catch (e) { 
+      console.error(e); 
+      setToast({ type: 'error', message: 'Failed to delete' });
+    }
+  };
+
+;
+
+
+  const markAsRead = async (chatId) => {
+    try {
+      await db.chatReads.put({ chatId, lastRead: Math.floor(Date.now() / 1000) });
+      setUnreadCounts(prev => ({ ...prev, [chatId]: 0 }));
+    } catch(e) {}
+  }
+
+  const openChat = (type, id, groupObj = null) => {
+    markAsRead(id);
+    setTypingUsers({});
+    setGroupTypingUsers({});
+    if (type === 'dm') { 
+      setActiveDm(id); 
+      setActiveGroup(null); // ✅ Clear group state
+      setView('dm'); 
+    }
+    else { 
+      setActiveGroup(groupObj); 
+      setActiveDm(null); // ✅ Clear DM state
+      setView('group'); 
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-4 h-full animate-fade-in">
+        <div className="flex justify-between items-center mb-6 px-2">
+          <div className="h-8 w-24 bg-surfaceLight rounded-lg animate-pulse" />
+          <div className="flex gap-2">
+            <div className="h-8 w-8 bg-surfaceLight rounded-full animate-pulse" />
+            <div className="h-8 w-8 bg-surfaceLight rounded-full animate-pulse" />
+          </div>
+        </div>
+        
+        <div className="space-y-3">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="bg-surface p-4 rounded-2xl border border-white/5 flex items-center gap-4">
+              {/* Avatar Skeleton */}
+              <div className="w-12 h-12 rounded-full bg-surfaceLight animate-pulse shrink-0" />
+              {/* Text Skeletons */}
+              <div className="flex-1 space-y-2">
+                <div className="h-4 bg-surfaceLight rounded animate-pulse w-1/3" />
+                <div className="h-3 bg-surfaceLight rounded animate-pulse w-1/2" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // --- CHAT LIST VIEW ---
+  if (view === 'list') {
+    return (
+      <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} transition={{ duration: 0.2 }} className="p-4 h-full relative overflow-y-auto pb-24">
+        <ToastUI />
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center gap-3"><h2 className="text-2xl font-bold tracking-tight">Chats</h2><button onClick={() => setView('shop')} className="bg-blue-600 text-white text-xs px-3 py-1 rounded-full">Shop</button></div>
+          <div className="flex gap-2">
+            
+          <button onClick={fetchChats} className="p-2 text-white/50 hover:text-white"><RefreshCw size={20}/></button>
+            <button onClick={() => setView('search')} className="p-2 text-white/50 hover:text-white"><Search size={20}/></button>
+          </div>
+        </div>
+
+        <ChatList onOpenChat={openChat} />
+
+              <CreateGroupModal createGroup={createGroup} />
+
+        <FloatingMenu /><MyProfileModal identity={identity} />
+
+      </motion.div>
+    )
+  }
+
+
+  // --- SHOP VIEW ---
+
+
+  const handleConfirmOrder = (order) => {
+          setCheckoutProduct(null);
+          const targetDm = order.vendorPubkey || identity.pk;
+          
+          if (typeof openChat === 'function') {
+            openChat('dm', targetDm);
+          } else {
+            setActiveDm(targetDm);
+            setActiveGroup(null);
+            setView('dm');
+          }
+          
+          setTimeout(async () => {
+            try {
+              const { finalizeEvent, nip44 } = await import('nostr-tools');
+              const pool = await getAuthenticatedPool(identity);
+              
+              const payload = { 
+                type: 'cipher_order', 
+                productName: order.productName, 
+                amountFiat: order.amountFiat,
+                amountCrypto: order.amountCrypto,
+                currency: order.currency,
+                status: 'payment_sent',
+                shippingAddress: order.shippingAddress || 'No address provided'
+              };
+              
+              const shared = nip44.v2.utils.getConversationKey(identity.sk, targetDm);
+              const enc = nip44.v2.encrypt(JSON.stringify(payload), shared);
+              const ev = finalizeEvent({ kind: 4, created_at: Math.floor(Date.now() / 1000), tags: [['p', targetDm]], content: enc }, identity.sk);
+              
+              await saveMessage(targetDm, { id: ev.id, isSender: true, timestamp: ev.created_at, data: payload, pubkey: identity.pk, isGroup: false });
+              Promise.allSettled(pool.publish(generalRelays, ev)).catch(console.error);
+              setToast({ type: 'success', message: 'Order sent!' });
+            } catch (err) { 
+              console.error("[Checkout] Background task failed:", err); 
+            }
+          }, 50);
+        };
+
+  if (view === 'shop') {
+    return (
+      <>
+        <ShopView 
+          myProducts={myProducts} 
+          setMyProducts={setMyProducts} 
+          setCheckoutProduct={setCheckoutProduct} 
+          setView={setView} 
+          identity={identity} 
+          setToast={setToast} 
+          checkoutProduct={checkoutProduct} 
+          onConfirmOrder={handleConfirmOrder} 
+        />
+  
+
+
+      <OneTapCheckout 
+          isOpen={!!checkoutProduct} 
+          onClose={() => setCheckoutProduct(null)}
+          product={checkoutProduct}
+          vendor={{ pubkey: checkoutProduct?.pubkey || identity?.pk || '', btcAddress: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', xmrAddress: '44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A' }}
+          identity={identity}
+          onConfirmOrder={handleConfirmOrder}
+        />
+      </>
+    );
+  }
+
+  // --- SEARCH VIEW ---
+
+  if (view === 'search') {
+    return (
+      <SearchView
+        ToastUI={ToastUI}
+        handleSearch={handleSearch}
+        joinGroupById={joinGroupById}
+        openChat={openChat}
+      />
+    )
+  }
+
+  // --- ACTIVE DM VIEW ---
+  if (view === 'dm' && activeDm) {
+    const activeMessages = dms[activeDm] || []
+    // ✅ FIX: Use hoisted profiles
+    const profile = profiles[activeDm] || { displayName: activeDm.slice(0,8) }
+
+    return (
+      <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 20, opacity: 0 }} transition={{ duration: 0.2 }} className="absolute inset-0 z-50 flex flex-col bg-[#0a0a0a] pb-[72px]">
+        <ToastUI />
+        
+        
+        <ChatHeader mode="dm" />
+        
+        <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 p-4 space-y-4">
+          {activeMessages.map((msg, i) => {
+            if (deletedMsgs.has(msg.id)) return null
+            const showTail = i === 0 || activeMessages[i-1].isSender !== msg.isSender
+            const repliedMsg = msg.replyTo ? activeMessages.find(m => m.id === msg.replyTo) : null
+            const msgData = msg.data || {}
+            return (
+              <MessageBubble
+                identity={identity}
+                key={msg.id}
+                msg={msg}
+                data={msgData}
+                showTail={showTail}
+                repliedTo={repliedMsg}
+                repliedData={repliedMsg?.data}
+                reactions={reactions[msg.id]}
+                onReact={(emoji) => sendReaction(msg.id, emoji, false, null, msg.pubkey)}
+                onSelect={(m, d, action) => {
+                  if (action === 'close') setSelectedMessage(null);
+                  else if (action === 'open_picker') { setShowFullEmoji(true); setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: msgData.message || msgData.url }); }
+                  else setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: msgData.message || msgData.url });
+                }}
+                isSelected={selectedMessage?.id === msg.id}
+                isGroup={false}
+                myPubkey={identity.pk}
+                onAction={handleMessageAction}
+              />
+            )
+          })}
+          
+          
+          <div className="h-4" />
+        
+          
+          </div>
+
+        <ChatReplyPreview />
+        <MessageInput
+          value={newMessage}
+          onChange={setNewMessage}
+          onSend={() => { if (newMessage.trim()) { sendMessage(newMessage); setNewMessage(''); } }}
+          canPost={canPost}
+          isChannel={false}
+          onImageUpload={handleImageUpload}
+          startRecording={startRecording}
+          stopRecording={stopRecording}
+          isRecording={isRecording}
+          uploadingImage={uploadingImage}
+        />
+            {profilePubkey && (
+        <ProfileModal 
+          pubkey={profilePubkey} 
+          profile={profiles[profilePubkey]} 
+          identity={identity}
+          onClose={() => setProfilePubkey(null)} 
+          onMessage={(pk) => { openChat('dm', pk); setProfilePubkey(null); }}
+          onReview={(pk) => { setReviewTarget(pk); }}
+        />
+      )}
+
+
+      {showFullEmoji && selectedMessage && (
+        <FullEmojiPicker
+          onSelect={(emoji) => {
+            const msgId = selectedMessage.id;
+            const authorPk = selectedMessage.pubkey;
+            setShowFullEmoji(false);
+            setSelectedMessage(null);
+            if (msgId) {
+              sendReaction(msgId, emoji, !!activeGroup, activeGroup?.id, authorPk);
+            }
+          }}
+          onClose={() => {
+            setShowFullEmoji(false);
+            setSelectedMessage(null);
+          }}
+        />
+      )}
+
+      {reviewTarget && (
+        <ReviewModal
+          targetName={profiles[reviewTarget]?.displayName || profiles[reviewTarget]?.name || `User ${reviewTarget.slice(0, 4)}`}
+          onSubmit={async (rating, text) => {
+            const res = await sendReview(reviewTarget, rating, text);
+            if (res.success) {
+              setToast({ type: 'success', message: 'Review published!' });
+              return true;
+            } else {
+              setToast({ type: 'error', message: res.error || 'Failed to publish' });
+              return false;
+            }
+          }}
+          onClose={() => setReviewTarget(null)}
+        />
+      )}
+      </motion.div>
+    );
+  }
+
+
+  // --- ACTIVE GROUP VIEW ---
+  if (view === 'group' && activeGroup) {
+    const groupMsgs = groupMessages[activeGroup.id] || [];
+
+    return (
+      <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 20, opacity: 0 }} transition={{ duration: 0.2 }} className="absolute inset-0 z-50 flex flex-col bg-[#0a0a0a] pb-[72px]">
+        <ToastUI />
+        
+
+        <ChatHeader mode="group" />
+        <ChatPinnedBar unpinMessage={unpinMessage} />
+
+        <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 p-4 space-y-4">
+          {groupMsgs.length === 0 && (
+            <div className="text-center text-white/30 mt-10 text-sm">No messages yet. Say hi!</div>
+          )}
+          {groupMsgs.map((msg, i) => {
+            if (deletedMsgs.has(msg.id)) return null
+            const showTail = i === 0 || groupMsgs[i-1].isSender !== msg.isSender
+            const repliedMsg = msg.replyTo ? groupMsgs.find(m => m.id === msg.replyTo) : null
+            let parsed = {}
+            try { parsed = JSON.parse(msg.rawContent || '{}') } catch (e) { parsed = { type: 'text', message: msg.rawContent || '' } }
+            let repliedParsed = {}
+            try { repliedParsed = JSON.parse(repliedMsg?.rawContent || '{}') } catch (e) {}
+            return (
+              <MessageBubble
+                key={msg.id}
+                msg={msg}
+                data={parsed}
+                reactions={reactions[msg.id]}
+                onReact={(emoji) => {
+                  console.log("🚨 ONREACT FIRED:", emoji, msg.id);
+                  sendReaction(msg.id, emoji, !!activeGroup, activeGroup?.id, msg.pubkey);
+                }}
+                onAction={handleMessageAction}
+                myPubkey={identity.pk}
+                showTail={showTail}
+                repliedTo={repliedMsg}
+                repliedData={repliedParsed}
+                onSelect={(m, d, action) => {
+                  if (action === 'close') setSelectedMessage(null);
+                  else if (action === 'open_picker') { setShowFullEmoji(true); setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: parsed.message || parsed.url }); }
+                  else setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: parsed.message || parsed.url });
+                }}
+                isSelected={selectedMessage?.id === msg.id}
+                isGroup={true}
+                onSenderClick={(pk) => setProfilePubkey(pk)}
+                senderName={profiles[msg.pubkey]?.displayName || profiles[msg.pubkey]?.name || `User ${msg.pubkey.slice(0, 4)}`}
+              />
+            )
+          })}
+          
+          
+          <div className="h-4" />
+        </div>
+
+        <ChatReplyPreview />
+        <MessageInput
+          value={newMessage}
+          onChange={setNewMessage}
+          onSend={() => { if (newMessage.trim()) { sendMessage(newMessage); setNewMessage(''); } }}
+          canPost={canPost}
+          isChannel={false}
+          onImageUpload={handleImageUpload}
+          startRecording={startRecording}
+          stopRecording={stopRecording}
+          isRecording={isRecording}
+          uploadingImage={uploadingImage}
+        />
+
+        {showGroupInfo && (
+          <div className="fixed inset-0 z-[60] flex justify-end bg-black/60 backdrop-blur-sm">
+            <div className="w-full max-w-md bg-[#0a0a0a] h-full shadow-2xl flex flex-col border-l border-white/10">
+              <div className="p-4 border-b border-white/10 flex items-center gap-4 bg-[#111]">
+                <button onClick={() => setShowGroupInfo(false)} className="text-white/60 hover:text-white">
+                  <ArrowLeft size={20} />
+                </button>
+                <h2 className="text-lg font-bold">Group Info</h2>
+              </div>
+
+              <div className="p-6 flex flex-col items-center border-b border-white/5">
+                <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-3 ${activeGroup.isChannel ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                  {activeGroup.isChannel ? <Megaphone size={32} /> : <Users size={32} />}
+                </div>
+                <h3 className="text-xl font-bold">{activeGroup.name}</h3>
+                <p className="text-sm text-white/50">{activeGroup.id}</p>
+                <p className="text-xs text-white/40 mt-1">{activeGroup.about || 'No description'}</p>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-bold text-white/40 uppercase tracking-wider">Members ({groupMembers.length})</p>
+                </div>
+
+                <div className="space-y-3">
+                  {groupMembers.map((member) => {
+                    const isMe = member.pubkey === identity.pk;
+                    const isAdmin = member.role === 'admin';
+                    const amIAdmin = activeGroup?.creator === identity.pk;
+
+                    return (
+                      <div key={member.pubkey} onClick={() => setProfilePubkey(member.pubkey)} className="flex items-center gap-3 bg-white/5 p-3 rounded-xl cursor-pointer hover:bg-white/10 transition-colors">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${isAdmin ? 'bg-purple-500/30 text-purple-300' : 'bg-blue-500/30 text-blue-300'}`}>
+                          {member.pubkey.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold">{isMe ? 'You' : (profiles[member.pubkey]?.displayName || profiles[member.pubkey]?.name || `User ${member.pubkey.slice(0, 4)}`)}</p>
+                          <p className="text-xs text-white/50">{isAdmin ? '👑 Admin' : 'Member'}</p>
+                        </div>
+
+                        {amIAdmin && !isMe && (
+                          <div className="flex gap-1">
+                            <button
+                              onClick={async () => {
+                                const { finalizeEvent } = await import('nostr-tools');
+                                const pool = await getAuthenticatedPool(identity);
+                                const ev = finalizeEvent({ kind: 9000, created_at: Math.floor(Date.now() / 1000), tags: [['h', activeGroup.id], ['p', member.pubkey], ['role', isAdmin ? 'member' : 'admin']], content: '' }, identity.sk);
+                                await Promise.allSettled(pool.publish(groupRelays, ev));
+                                setGroupMembers(prev => prev.map(x => x.pubkey === member.pubkey ? { ...x, role: isAdmin ? 'member' : 'admin' } : x));
+                                setToast({ type: 'success', message: isAdmin ? 'Demoted' : 'Promoted' });
+                              }}
+                              className="text-[10px] bg-white/10 hover:bg-white/20 px-2 py-1 rounded"
+                            >
+                              {isAdmin ? 'Demote' : 'Promote'}
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (!window.confirm('Kick this member?')) return;
+                                const { finalizeEvent } = await import('nostr-tools');
+                                const pool = await getAuthenticatedPool(identity);
+                                const ev = finalizeEvent({ kind: 9001, created_at: Math.floor(Date.now() / 1000), tags: [['h', activeGroup.id], ['p', member.pubkey]], content: '' }, identity.sk);
+                                await Promise.allSettled(pool.publish(groupRelays, ev));
+                                setGroupMembers(prev => prev.filter(x => x.pubkey !== member.pubkey));
+                                setToast({ type: 'success', message: 'Member kicked' });
+                              }}
+                              className="text-[10px] bg-red-500/20 hover:bg-red-500/30 text-red-400 px-2 py-1 rounded"
+                            >
+                              Kick
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div
+                  onClick={async () => {
+                    setShowGroupInfo(false);
+                    if (typeof leaveGroup === 'function') await leaveGroup(activeGroup.id);
+                  }}
+                  className="flex items-center justify-between p-3 bg-red-500/10 rounded-xl border border-red-500/20 cursor-pointer mt-6"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-red-400">Leave Group</p>
+                    <p className="text-xs text-red-400/50">Remove yourself from this group</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+            {profilePubkey && (
+        <ProfileModal 
+          pubkey={profilePubkey} 
+          profile={profiles[profilePubkey]} 
+          identity={identity}
+          onClose={() => setProfilePubkey(null)} 
+          onMessage={(pk) => { openChat('dm', pk); setProfilePubkey(null); }}
+          onReview={(pk) => { setReviewTarget(pk); }}
+        />
+      )}
+
+      {showFullEmoji && selectedMessage && (
+        <FullEmojiPicker
+          onSelect={(emoji) => {
+            const msgId = selectedMessage.id;
+            const authorPk = selectedMessage.pubkey;
+            setShowFullEmoji(false);
+            setSelectedMessage(null);
+            if (msgId) {
+              sendReaction(msgId, emoji, !!activeGroup, activeGroup?.id, authorPk);
+            }
+          }}
+          onClose={() => {
+            setShowFullEmoji(false);
+            setSelectedMessage(null);
+          }}
+        />
+      )}
+
+      {reviewTarget && (
+        <ReviewModal
+          targetName={profiles[reviewTarget]?.displayName || profiles[reviewTarget]?.name || `User ${reviewTarget.slice(0, 4)}`}
+          onSubmit={async (rating, text) => {
+            const res = await sendReview(reviewTarget, rating, text);
+            if (res.success) {
+              setToast({ type: 'success', message: 'Review published!' });
+              return true;
+            } else {
+              setToast({ type: 'error', message: res.error || 'Failed to publish' });
+              return false;
+            }
+          }}
+          onClose={() => setReviewTarget(null)}
+        />
+      )}
+      </motion.div>
+    );
+  }
+
+  return null;
+}
+
+function MessageIcon({ size }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+}

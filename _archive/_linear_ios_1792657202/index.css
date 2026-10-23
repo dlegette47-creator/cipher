@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #050505;
+  color: #f3f4f6;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+@layer utilities {
+  /* Signal/Telegram inspired soft dark panel */
+  .hybrid-panel {
+    background: #111111;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 1rem;
+  }
+
+  /* SimpleX inspired high-contrast button */
+  .hybrid-button {
+    transition: all 0.2s ease;
+    border-radius: 0.75rem;
+  }
+  
+  .hybrid-button:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .hybrid-button:active {
+    transform: scale(0.97);
+  }
+
+  /* Session inspired neon glow for active states */
+  .neon-blue {
+    color: #3b82f6;
+    text-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+  }
+
+  .neon-green {
+    color: #10b981;
+    text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+  }
+
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+}

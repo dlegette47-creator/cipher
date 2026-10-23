@@ -1,0 +1,132 @@
+import { create } from 'zustand';
+
+export const useChatStore = create((set, get) => ({
+  // NAVIGATION
+  view: 'list',
+  activeDm: null,
+  activeGroup: null,
+  setView: (view) => set({ view }),
+  setActiveDm: (v) => set({ activeDm: v }),
+  setActiveGroup: (v) => set({ activeGroup: v }),
+  openChat: (type, id, groupObj = null) => {
+    if (type === 'dm') {
+      set({ view: 'dm', activeDm: id, activeGroup: null, typingUsers: {}, groupTypingUsers: {} });
+    } else {
+      set({ view: 'group', activeGroup: groupObj, activeDm: null, typingUsers: {}, groupTypingUsers: {} });
+    }
+  },
+  closeChat: () => set({ view: 'list', activeDm: null, activeGroup: null }),
+
+  // DATA
+  dms: {},
+  groups: [],
+  groupMessages: {},
+  profiles: {},
+  groupMembers: [],
+  pinnedMessages: {},
+  unreadCounts: {},
+  reactions: {},
+  deletedMsgs: new Set(),
+
+  setDms: (v) => set((s) => ({ dms: typeof v === 'function' ? v(s.dms) : v })),
+  setGroups: (v) => set((s) => ({ groups: typeof v === 'function' ? v(s.groups) : v })),
+  setGroupMessages: (v) => set((s) => ({ groupMessages: typeof v === 'function' ? v(s.groupMessages) : v })),
+  setProfiles: (v) => set((s) => ({ profiles: typeof v === 'function' ? v(s.profiles) : v })),
+  setGroupMembers: (v) => set({ groupMembers: v }),
+  setPinnedMessages: (v) => set((s) => ({ pinnedMessages: typeof v === 'function' ? v(s.pinnedMessages) : v })),
+  setUnreadCounts: (v) => set((s) => ({ unreadCounts: typeof v === 'function' ? v(s.unreadCounts) : v })),
+  setReactions: (v) => set((s) => ({ reactions: typeof v === 'function' ? v(s.reactions) : v })),
+  setDeletedMsgs: (v) => set({ deletedMsgs: v }),
+
+  // TYPING
+  typingUsers: {},
+  groupTypingUsers: {},
+  setTypingUsers: (v) => set((s) => ({ typingUsers: typeof v === 'function' ? v(s.typingUsers) : v })),
+  setGroupTypingUsers: (v) => set((s) => ({ groupTypingUsers: typeof v === 'function' ? v(s.groupTypingUsers) : v })),
+
+  // SEARCH
+  searchQuery: '',
+  searchResults: [],
+  isSearching: false,
+  setSearchQuery: (v) => set({ searchQuery: v }),
+  setSearchResults: (v) => set({ searchResults: v }),
+  setIsSearching: (v) => set({ isSearching: v }),
+
+  // UI MODALS
+  showMenu: false,
+  showCreateGroup: false,
+  showGroupInfo: false,
+  showMyProfile: false,
+  showAddProduct: false,
+  selectedMessage: null,
+  profilePubkey: null,
+  checkoutProduct: null,
+  setShowMenu: (v) => set({ showMenu: v }),
+  setShowCreateGroup: (v) => set({ showCreateGroup: v }),
+  setShowGroupInfo: (v) => set({ showGroupInfo: v }),
+  setShowMyProfile: (v) => set({ showMyProfile: v }),
+  setShowAddProduct: (v) => set({ showAddProduct: v }),
+  setSelectedMessage: (v) => set({ selectedMessage: v }),
+  setProfilePubkey: (v) => set({ profilePubkey: v }),
+  setCheckoutProduct: (v) => set({ checkoutProduct: v }),
+
+  // INPUT
+  newMessage: '',
+  newGroupName: '',
+  newGroupAbout: '',
+  isChannel: false,
+  replyingTo: null,
+  setNewMessage: (v) => set({ newMessage: v }),
+  setNewGroupName: (v) => set({ newGroupName: v }),
+  setNewGroupAbout: (v) => set({ newGroupAbout: v }),
+  setIsChannel: (v) => set({ isChannel: v }),
+  setReplyingTo: (v) => set({ replyingTo: v }),
+
+  // ROLE
+  isVendor: localStorage.getItem('cipher_is_vendor') === 'true',
+  setIsVendor: (v) => {
+    localStorage.setItem('cipher_is_vendor', v.toString());
+    set({ isVendor: v });
+  },
+
+  // PROFILE EDITOR
+  myName: '',
+  myUsername: '',
+  myAbout: '',
+  setMyName: (v) => set({ myName: v }),
+  setMyUsername: (v) => set({ myUsername: v }),
+  setMyAbout: (v) => set({ myAbout: v }),
+
+  // PRODUCTS
+  myProducts: (() => {
+    try { return JSON.parse(localStorage.getItem('cipher_my_products') || '[]'); }
+    catch (e) { return []; }
+  })(),
+  newProduct: { name: '', priceUsd: '', image: '' },
+  setMyProducts: (v) => {
+    const products = typeof v === 'function' ? v(get().myProducts) : v;
+    set({ myProducts: products });
+    localStorage.setItem('cipher_my_products', JSON.stringify(products));
+  },
+  setNewProduct: (v) => set({ newProduct: v }),
+
+  // LOADING
+  panicWipeEnabled: localStorage.getItem('cipher_panic_wipe') === 'true',
+  loading: true,
+  uploadingImage: false,
+  isRecording: false,
+  setLoading: (v) => set({ loading: v }),
+  setPanicWipeEnabled: (v) => {
+    localStorage.setItem('cipher_panic_wipe', v.toString());
+    set({ panicWipeEnabled: v });
+  },
+  setUploadingImage: (v) => set({ uploadingImage: v }),
+  setIsRecording: (v) => set({ isRecording: v }),
+
+  // TOAST
+  toast: null,
+  setToast: (toast) => {
+    set({ toast });
+    if (toast) setTimeout(() => set({ toast: null }), 3000);
+  },
+}));

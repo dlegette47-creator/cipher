@@ -1,0 +1,707 @@
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { Package, CheckCircle2, Forward, Store } from 'lucide-react';
+import AudioPlayer from './AudioPlayer';
+import LinkPreview from './LinkPreview';
+import { QRCodeSVG } from 'qrcode.react';
+
+function renderMessage(text) {
+  if (!text) return null;
+  const parts = text.split(/(\|\|.*?\|\|)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('||') && part.endsWith('||')) {
+      return <span key={i} onClick={(e) => { e.currentTarget.classList.remove('blur-sm', 'text-transparent'); e.currentTarget.classList.add('text-white'); }} className="bg-surfaceLight px-1 rounded cursor-pointer blur-sm text-transparent transition-all select-none">{part.slice(2, -2)}</span>;
+    }
+    const boldParts = part.split(/(\*\*.*?\*\*)/g);
+    return boldParts.map((bp, j) => {
+      if (bp.startsWith('**') && bp.endsWith('**')) return <strong key={`${i}-${j}`}>{bp.slice(2, -2)}</strong>;
+      
+      // Parse @mentions first
+      const mentionRegex = /(@[a-zA-Z0-9_]+)/g;
+      const mentionParts = bp.split(mentionRegex);
+      return mentionParts.map((mp, mIdx) => {
+        if (mp && mp.match(mentionRegex)) {
+          return <span key={`m-${i}-${j}-${mIdx}`} className="text-blue-400 font-semibold">{mp}</span>;
+        }
+        
+        // Then parse URLs within non-mention parts
+        const urlRegex = /((https?:\/\/)?(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*))/gi;
+        const urlParts = mp.split(urlRegex);
+        return urlParts.map((up, k) => {
+          if (up && up.match(urlRegex)) {
+            const href = up.match(/^https?:\/\//) ? up : `https://${up}`;
+            return <a key={`${i}-${j}-${mIdx}-${k}`} href={href} target="_blank" rel="noreferrer" className="text-blue-300 hover:underline break-all" onClick={e => e.stopPropagation()}>{up}</a>;
+          }
+          return up;
+        });
+      });
+    });
+  });
+}
+
+export default function MessageBubble({
+  msg, data, showTail, repliedTo, repliedData, onSelect, isGroup,
+  onSenderClick, senderName, reactions, onReact, myPubkey, isSelected, onAction,
+  onReplyAction, onImageClick, onReplyClick, isScammer, onShowReactions, onShowEdits, selectionMode, isSelectedMsg, onToggleSelect,
+  onVendorClick
+}) {
+  const type = data?.type || 'text';
+  const bodyText = data?.message || '';
+
+  const aggregated = (() => {
+    if (!reactions || reactions.length === 0) return [];
+    const map = {};
+    reactions.forEach((r) => {
+      if (!map[r.emoji]) map[r.emoji] = { emoji: r.emoji, count: 0, hasMine: false };
+      map[r.emoji].count++;
+      if (r.pubkey === myPubkey) map[r.emoji].hasMine = true;
+    });
+    return Object.values(map);
+  })();
+
+  if (type === 'system') {
+    return (
+      <div className="w-full flex justify-center my-3">
+        <span className="bg-[#1c1c1e] border border-white/5 text-gray-400 text-xs font-medium px-4 py-1.5 rounded-full shadow-sm text-center">
+          {data.message}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div id={`msg-${msg.id}`} className={`relative flex flex-col ${msg.isSender ? 'items-end' : 'items-start'} animate-fade-in group`}>
+      <motion.div 
+        drag="x" 
+        dragConstraints={{ left: 0, right: 0 }} 
+        dragElastic={0.1}
+        onDragEnd={(e, info) => { if (info.offset.x > 50 && onReplyAction) onReplyAction(); }}
+        className={`max-w-[85%] flex flex-col ${msg.isSender ? 'items-end' : 'items-start'}`}
+      >
+        {selectionMode && (
+          <div className="flex items-center justify-center px-2">
+            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isSelectedMsg ? 'bg-blue-500 border-blue-500' : 'border-white/30'}`}>
+              {isSelectedMsg && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+            </div>
+          </div>
+        )}
+        <div
+          onClick={() => {
+            if (selectionMode) {
+              onToggleSelect?.(msg.id);
+            } else {
+              onSelect?.(msg, data);
+            }
+          }}
+          onContextMenu={(e) => { e.preventDefault(); onSelect?.(msg, data); }}
+          className={`px-4 py-2 relative shadow-sm cursor-pointer group select-none ${isSelectedMsg ? 'ring-2 ring-blue-500' : ''} ${
+            msg.isSender
+              ? `bg-blue-600 text-white ${showTail ? 'rounded-2xl rounded-tr-sm' : 'rounded-2xl'}`
+              : `bg-[#171717] text-white border border-white/5 ${showTail ? 'rounded-2xl rounded-tl-sm' : 'rounded-2xl'}`
+          } ${isSelected ? 'ring-2 ring-blue-500/50' : ''}`}
+        >
+          {repliedTo && (
+            <div 
+              onClick={(e) => { e.stopPropagation(); onReplyClick && onReplyClick(msg.replyTo); }}
+              className="bg-black/20 p-2 rounded-lg mb-2 border-l-2 border-blue-400 text-xs text-white/70 truncate cursor-pointer hover:bg-black/30 transition-colors"
+            >
+              <p className="font-semibold text-blue-300 mb-0.5">Reply</p>
+              {repliedData?.message || repliedData?.url || 'Message'}
+            </div>
+          )}
+
+          {!msg.isSender && isGroup && (
+            <div className="flex items-center gap-1.5 mb-1">
+              <p onClick={(e) => { e.stopPropagation(); onSenderClick && onSenderClick(msg.pubkey); }} className="text-[11px] text-blue-300 font-semibold cursor-pointer hover:underline">
+                {senderName || `User ${(msg.pubkey || "anon").slice(0, 4)}`}
+              </p>
+              {onVendorClick && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onVendorClick(msg.pubkey); }}
+                  className="text-[10px] text-purple-300 hover:text-purple-200 flex items-center gap-0.5 bg-purple-500/10 hover:bg-purple-500/25 border border-purple-500/20 px-1.5 py-[1px] rounded-full transition-colors"
+                  title="View vendor storefront"
+                >
+                  <Store size={9} /> Store
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* PRODUCT CARD */}
+          {type === 'product' && (
+            <motion.div 
+              layoutId={`product-card-${msg.id}`}
+              className="relative bg-[#1a1a1a] border border-white/10 rounded-xl p-3 mb-2 min-w-[240px] shadow-lg overflow-hidden"
+            >
+              {isScammer && (
+                <div className="absolute top-0 left-0 right-0 bg-red-600 text-white text-[10px] font-black text-center py-1 uppercase tracking-widest z-20">
+                  ⚠️ Reported Scammer
+                </div>
+              )}
+              {data.soldOut && (
+                <div className="absolute inset-0 bg-black/70 rounded-xl flex items-center justify-center z-10">
+                  <div className="border-4 border-red-500 text-red-500 px-4 py-2 rounded-lg transform -rotate-12">
+                    <p className="text-2xl font-black tracking-widest">SOLD OUT</p>
+                  </div>
+                </div>
+              )}
+
+              {data.image && <img src={data.image} alt={data.title} className="w-full h-40 object-cover rounded-lg mb-3" />}
+              <div className="space-y-1 mb-3">
+                {data.updatedFrom && <span className="text-[9px] font-bold text-blue-400 bg-blue-500/20 px-2 py-0.5 rounded-full">UPDATED</span>}
+                <p className="text-[15px] font-bold text-white">{data.title}</p>
+                {data.description && <p className="text-xs text-white/60 line-clamp-2">{data.description}</p>}
+              </div>
+              <div className="flex justify-between items-center bg-black/40 p-2 rounded-lg mb-3">
+                <p className="text-sm font-bold text-green-400">${data.priceUsd} USD</p>
+                <p className="text-[10px] text-green-400 font-bold uppercase tracking-wider">🛡️ Verified Vendor</p>
+              </div>
+              <div className="flex gap-2">
+                {(() => {
+                  const isDropExpired = data.dropUntil && data.dropUntil < Math.floor(Date.now() / 1000);
+                  const isSoldOut = data.soldOut || isDropExpired;
+                  return (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); if (!isSoldOut) onAction?.('buy_product', msg); }}
+                      disabled={isSoldOut}
+                      className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-white/10 disabled:text-white/30 text-white text-sm font-bold py-2.5 rounded-xl transition-all active:scale-95"
+                    >
+                      {isSoldOut ? (isDropExpired ? '⏰ Drop Ended' : 'Sold Out') : 'Buy Now'}
+                    </button>
+                  );
+                })()}
+                {msg.isSender && (
+                  <>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onAction?.('edit_product', msg); }}
+                      className="bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 px-3 py-2.5 rounded-xl transition-colors"
+                      title="Edit Product"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onAction?.('broadcast_product', msg); }}
+                      className="bg-green-500/20 hover:bg-green-500/30 text-green-400 px-3 py-2.5 rounded-xl transition-colors"
+                      title="Broadcast to Groups"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                    </button>
+                    {!data.soldOut && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onAction?.('mark_sold_out', msg); }}
+                        className="bg-red-500/20 hover:bg-red-500/30 text-red-400 px-3 py-2.5 rounded-xl transition-colors"
+                        title="Mark as Sold Out"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {/* ORDER REQUEST CARD */}
+          {type === 'order_request' && <OrderRequestCard msg={msg} data={data} onAction={onAction} />}
+
+          {/* CIPHER ORDER (legacy receipt) */}
+          {type === 'cipher_order' && (
+            <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-3 mb-2 min-w-[240px] shadow-lg">
+              <div className="flex items-center gap-2 mb-2 pb-2 border-b border-white/10">
+                <Package size={16} className="text-blue-400" />
+                <span className="font-bold text-sm text-white">Order Receipt</span>
+              </div>
+              <div className="space-y-1 mb-2">
+                <p className="text-[11px] text-white/50 uppercase tracking-wider">Product</p>
+                <p className="text-sm font-semibold text-white truncate">{data.productName || 'Unknown Product'}</p>
+              </div>
+              <div className="flex justify-between items-center bg-black/40 p-2 rounded-lg mb-2">
+                <div>
+                  <p className="text-[10px] text-white/50 uppercase">Amount</p>
+                  <p className="text-sm font-bold text-green-400">${data.amountFiat ? Number(data.amountFiat).toFixed(2) : '0.00'}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] text-white/50 uppercase">Crypto</p>
+                  <p className="text-[11px] font-mono text-white/80">{data.amountCrypto} {data.currency?.toUpperCase()}</p>
+                </div>
+              </div>
+              {data.shippingAddress && (
+                <div className="bg-black/40 p-2 rounded-lg mb-2">
+                  <p className="text-[10px] text-white/50 uppercase mb-1">Ship To</p>
+                  <p className="text-xs text-white/90 whitespace-pre-wrap">{data.shippingAddress}</p>
+                </div>
+              )}
+              <div className="mt-2 flex flex-col gap-2">
+                <div className="flex justify-center">
+                  <span className={`text-[10px] font-bold px-3 py-1 rounded-full border ${
+                    data.status === 'completed' ? 'text-green-400 bg-green-400/10 border-green-400/20' :
+                    data.status === 'shipped' ? 'text-purple-400 bg-purple-400/10 border-purple-400/20' :
+                    data.status === 'accepted' ? 'text-blue-400 bg-blue-400/10 border-blue-400/20' :
+                    'text-yellow-400 bg-yellow-400/10 border-yellow-400/20'
+                  }`}>
+                    {(data.status || 'payment_sent').replace('_', ' ').toUpperCase()}
+                  </span>
+                </div>
+                {msg.isSender && data.status !== 'completed' && onAction && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onAction('confirm_delivery', msg); }}
+                    className="w-full mt-1 bg-green-500 hover:bg-green-400 text-black text-sm font-black uppercase tracking-wider py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(34,197,94,0.4)] active:scale-95"
+                  >
+                    Confirm Delivery
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ALBUM */}
+          {type === 'album' && (
+            <div className="mb-2 max-w-[260px]">
+              <div className={`grid gap-1 ${data.urls?.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                {(data.urls || []).map((url, idx) => (
+                  <img key={idx} src={url} onClick={(e) => { e.stopPropagation(); onImageClick && onImageClick(url); }} className={`rounded-lg object-cover cursor-pointer hover:opacity-90 transition-opacity ${data.urls.length > 1 ? 'h-32 w-full' : 'max-h-60 w-full'}`} />
+                ))}
+              </div>
+              {data.message && <p className="text-[15px] leading-snug break-words mt-2">{renderMessage(data.message)}</p>}
+            </div>
+          )}
+
+          {/* SINGLE IMAGE */}
+          {type === 'image' && (
+            <div className="relative">
+              <img src={data.url} onClick={(e) => { e.stopPropagation(); onImageClick && onImageClick(data.url); }} className="rounded-lg max-h-60 object-cover mb-1 cursor-pointer hover:opacity-90 transition-opacity" />
+              {data.metadata_stripped && (
+                <div className="absolute bottom-2 right-2 bg-black/70 text-[9px] text-green-400 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 border border-green-500/30">
+                  🛡️ SAFE
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* AUDIO */}
+          {type === 'audio' && <AudioPlayer url={data.url} />}
+
+          {/* FORWARDED */}
+          {data.forwardedFrom && (
+            <div className="flex items-center gap-1 text-[11px] text-blue-300/80 italic mb-1">
+              <Forward size={12} /> Forwarded from {data.forwardedFrom}
+            </div>
+          )}
+
+          {/* PENDING KEY (encrypted but no key yet) */}
+          {msg.pending && (
+            <div className="flex items-center gap-2 py-1">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-yellow-400 animate-pulse">
+                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <p className="text-xs text-white/50 italic">Securing message…</p>
+            </div>
+          )}
+
+          {/* TEXT */}
+          {!msg.pending && type === 'text' && (
+            <div>
+              <p className="text-[15px] leading-snug break-words overflow-hidden w-full">{renderMessage(bodyText)}</p>
+              {bodyText.match(/^https?:\/\/[^\s]+$/) && <LinkPreview url={bodyText} />}
+            </div>
+          )}
+
+          {/* ORDER UPDATE */}
+          {type === 'order_update' && (
+            <div className="bg-blue-600/20 border border-blue-500/30 rounded-xl p-3 mb-2 flex items-center gap-3">
+              <CheckCircle2 size={20} className="text-blue-400" />
+              <div>
+                <p className="text-sm font-bold text-white">Order Update</p>
+                <p className="text-xs text-blue-300">Vendor marked order as <strong>{data.status?.toUpperCase()}</strong></p>
+              </div>
+            </div>
+          )}
+
+          <div className={`flex items-center justify-end gap-1 mt-1 ${msg.isSender ? 'text-white/70' : 'text-gray-400'}`}>
+            <span className="text-[10px]">{new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            {msg.edited && (
+              <button onClick={(e) => { e.stopPropagation(); onShowEdits && onShowEdits(msg); }} className="text-[9px] text-white/60 hover:text-blue-400 underline ml-1 italic">edited</button>
+            )}
+            {msg.isSender && (
+              <span className="text-[11px] text-blue-400 ml-1">
+                {msg.read ? '✓✓' : '✓'}
+              </span>
+            )}
+          </div>
+        </div>
+      </motion.div>
+
+      {aggregated.length > 0 && (
+        <div className={`flex flex-wrap gap-1 mt-1 ${msg.isSender ? 'justify-end' : 'justify-start'}`}>
+          {aggregated.map((r) => (
+            <button
+              key={r.emoji}
+              onClick={(e) => { e.stopPropagation(); onReact && onReact(r.emoji); }}
+              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onShowReactions && onShowReactions(); }}
+              className={`text-[11px] px-2 py-0.5 rounded-full transition-colors ${
+                r.hasMine
+                  ? 'bg-blue-500/30 border border-blue-400/60 text-white'
+                  : 'bg-white/10 border border-white/10 text-white/80 hover:bg-white/20'
+              }`}
+            >
+              {r.emoji} {r.count}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function OrderRequestCard({ msg, data, onAction }) {
+  const [payCurrency, setPayCurrency] = useState('btc');
+  const [shipping, setShipping] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [rates, setRates] = useState({ btc: 0, xmr: 0 });
+  const [rateLoading, setRateLoading] = useState(true);
+
+  // Fetch live BTC/XMR rates when card mounts (accepted orders only trigger this)
+  useEffect(() => {
+    let mounted = true;
+    fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,monero&vs_currencies=usd')
+      .then(r => r.json())
+      .then(d => {
+        if (!mounted) return;
+        const btc = d?.bitcoin?.usd;
+        const xmr = d?.monero?.usd;
+        if (btc && xmr) setRates({ btc, xmr });
+      })
+      .catch(() => {})
+      .finally(() => { if (mounted) setRateLoading(false); });
+    return () => { mounted = false; };
+  }, []);
+
+  const product = data.product || {};
+  const isBuyer = msg.isSender;
+  const isVendor = !msg.isSender;
+
+  // Not accepted yet - pending
+  if (data.status === 'pending') {
+    return (
+      <div className="bg-[#1c1c1e] border border-blue-500/30 rounded-xl p-3 mb-2 min-w-[240px] shadow-lg">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+          <p className="text-xs font-bold text-blue-400 uppercase tracking-wider">Order Request</p>
+        </div>
+        <div className="flex gap-3 items-center mb-3">
+          {product.image && <img src={product.image} className="w-12 h-12 rounded-lg object-cover" />}
+          <div>
+            <p className="text-sm font-bold text-white">{product.title}</p>
+            <p className="text-xs text-green-400 font-mono">${product.priceUsd}</p>
+          </div>
+        </div>
+        {isBuyer && (
+          <p className="text-[11px] text-white/50 text-center italic">Waiting for vendor to accept...</p>
+        )}
+        {isVendor && (
+          <div className="flex gap-2 mt-2">
+            <button onClick={(e) => { e.stopPropagation(); onAction?.('decline_order', msg); }} className="flex-1 bg-white/10 hover:bg-white/20 text-white text-xs font-bold py-2 rounded-lg transition-colors">
+              Decline
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); onAction?.('accept_order', msg); }} className="flex-1 bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-2 rounded-lg transition-colors">
+              Accept
+            </button>
+          </div>
+        )}
+        {isBuyer && (
+          <button 
+            onClick={(e) => { e.stopPropagation(); if (window.confirm('Cancel this order request?')) onAction?.('cancel_order', msg); }} 
+            className="w-full mt-2 bg-white/5 hover:bg-white/10 text-white/50 text-[10px] font-bold py-1.5 rounded-lg transition-colors"
+          >
+            Cancel Request
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Accepted - buyer enters shipping FIRST, then sees QR to pay
+  if (data.status === 'accepted') {
+    const paymentMethods = data.paymentMethods || {};
+    const currentAddress = payCurrency === 'btc' ? paymentMethods.btc : paymentMethods.xmr;
+    const _btcRate = rates.btc || 0;
+    const _xmrRate = rates.xmr || 0;
+    if ((payCurrency === 'btc' && _btcRate === 0) || (payCurrency === 'xmr' && _xmrRate === 0)) {
+      return (
+        <div className="bg-[#1c1c1e] border border-blue-500/40 rounded-xl p-3 mb-2 min-w-[240px]">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            <p className="text-xs font-bold text-blue-400 uppercase tracking-wider">Fetching rate…</p>
+          </div>
+          <p className="text-[11px] text-white/50 text-center py-2">Getting live {payCurrency.toUpperCase()} price</p>
+        </div>
+      );
+    }
+    const amountCrypto = payCurrency === 'btc'
+      ? (product.priceUsd / _btcRate).toFixed(8)
+      : (product.priceUsd / _xmrRate).toFixed(4);
+    
+    const paymentUri = currentAddress 
+      ? (payCurrency === 'btc' 
+        ? `bitcoin:${currentAddress}?amount=${amountCrypto}`
+        : `monero:${currentAddress}?tx_amount=${amountCrypto}`)
+      : '';
+
+    return (
+      <div className="bg-[#1c1c1e] border border-green-500/40 rounded-xl p-3 mb-2 min-w-[280px] shadow-lg">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-2 h-2 rounded-full bg-green-500" />
+          <p className="text-xs font-bold text-green-400 uppercase tracking-wider">Pay Now</p>
+        </div>
+        
+        {isVendor ? (
+          <p className="text-[11px] text-white/50 text-center italic py-3">Waiting for buyer to pay...</p>
+        ) : (
+          <>
+            {/* STEP 1: Shipping first */}
+            {!showForm ? (
+              <div className="space-y-2">
+                <p className="text-[10px] text-white/50 uppercase mb-1">Step 1 of 2</p>
+                <p className="text-xs text-white/80 mb-2">Enter your shipping address</p>
+                <input 
+                  type="text"
+                  value={shipping}
+                  onChange={e => setShipping(e.target.value)}
+                  placeholder="Shipping / pickup details"
+                  className="w-full bg-[#0a0a0a] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-green-500 outline-none"
+                />
+                <button 
+                  onClick={() => setShowForm(true)}
+                  disabled={!shipping.trim()}
+                  className="w-full bg-green-600 hover:bg-green-500 disabled:bg-white/10 disabled:text-white/30 text-white text-xs font-bold py-2.5 rounded-lg transition-colors"
+                >
+                  Continue to Payment
+                </button>
+              </div>
+            ) : (
+              /* STEP 2: Show QR + payment */
+              <>
+                <p className="text-[10px] text-white/50 uppercase mb-2">Step 2 of 2</p>
+                <div className="bg-black/30 border border-white/10 rounded-lg p-2 mb-2">
+                  <p className="text-[9px] text-white/40 uppercase mb-0.5">Ship to</p>
+                  <p className="text-[11px] text-white/80 truncate">{shipping}</p>
+                </div>
+
+                {/* Currency Toggle */}
+                {paymentMethods.btc && paymentMethods.xmr && (
+                  <div className="flex gap-1 mb-3 bg-[#0a0a0a] p-1 rounded-lg">
+                    <button onClick={() => setPayCurrency('btc')} className={`flex-1 py-1.5 text-[10px] font-bold rounded ${payCurrency === 'btc' ? 'bg-orange-500/30 text-orange-400' : 'text-white/40'}`}>BTC</button>
+                    <button onClick={() => setPayCurrency('xmr')} className={`flex-1 py-1.5 text-[10px] font-bold rounded ${payCurrency === 'xmr' ? 'bg-orange-500/30 text-orange-400' : 'text-white/40'}`}>XMR</button>
+                  </div>
+                )}
+
+                {currentAddress ? (
+                  <>
+                    <div className="bg-white p-2 rounded-lg mb-2 flex justify-center">
+                      <QRCodeSVG value={paymentUri} size={140} level="M" />
+                    </div>
+                    <p className="text-[10px] text-white/50 font-mono text-center mb-1">Send {amountCrypto} {payCurrency.toUpperCase()}</p>
+                    <p className="text-[9px] text-white/30 text-center mb-2">at ${payCurrency === 'btc' ? rates.btc.toFixed(0) : rates.xmr.toFixed(2)}/{payCurrency.toUpperCase()} · rate live</p>
+                    <p className="text-[9px] text-white/30 font-mono text-center break-all mb-3">{currentAddress}</p>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); onAction?.('confirm_payment', { ...msg, data: { ...data, shippingAddress: shipping } }); }}
+                      className="w-full bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-2.5 rounded-lg transition-colors"
+                    >
+                      I've Paid
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setShowForm(false); }}
+                      className="w-full mt-1 text-[10px] text-white/40 hover:text-white/70 py-1"
+                    >
+                      ← Edit shipping
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-[11px] text-red-400 text-center py-2">Vendor didn't provide {payCurrency.toUpperCase()} address</p>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // Paid - vendor needs to ship
+  if (data.status === 'paid') {
+    return (
+      <div className="bg-[#1c1c1e] border border-purple-500/40 rounded-xl p-3 mb-2 min-w-[240px] shadow-lg">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-2 h-2 rounded-full bg-purple-500" />
+          <p className="text-xs font-bold text-purple-400 uppercase tracking-wider">Payment Confirmed</p>
+        </div>
+        <p className="text-sm font-bold text-white mb-1">{product.title}</p>
+        <p className="text-xs text-green-400 font-mono mb-2">${product.priceUsd}</p>
+        {data.shippingAddress && (
+          <div className="bg-black/40 p-2 rounded-lg mb-2">
+            <p className="text-[10px] text-white/50 uppercase mb-1">Ship To</p>
+            <p className="text-xs text-white/90">{data.shippingAddress}</p>
+          </div>
+        )}
+        {isVendor ? (
+          <div className="space-y-2 mt-2">
+            <input 
+              type="text"
+              placeholder="Tracking number (optional)"
+              id={`tracking-${msg.id}`}
+              className="w-full bg-[#0a0a0a] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-purple-500 outline-none"
+            />
+            <button 
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                const tracking = document.getElementById(`tracking-${msg.id}`)?.value || '';
+                onAction?.('mark_shipped', { ...msg, data: { ...data, tracking } }); 
+              }}
+              className="w-full bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold py-2.5 rounded-lg transition-colors"
+            >
+              Mark as Shipped
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2 mt-2">
+            <p className="text-[10px] text-white/50 text-center italic">Waiting for vendor to ship...</p>
+            <button
+              onClick={(e) => { e.stopPropagation(); onAction?.('report_issue', msg); }}
+              className="w-full bg-white/5 hover:bg-red-500/10 border border-white/10 hover:border-red-500/30 text-white/50 hover:text-red-400 text-[10px] font-bold py-1.5 rounded-lg transition-colors"
+            >
+              Report an Issue
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Shipped - show tracking
+  if (data.status === 'shipped') {
+    return (
+      <div className="bg-[#1c1c1e] border border-blue-500/40 rounded-xl p-3 mb-2 min-w-[240px] shadow-lg">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+          <p className="text-xs font-bold text-blue-400 uppercase tracking-wider">📦 Shipped</p>
+        </div>
+        <p className="text-sm font-bold text-white mb-1">{product.title}</p>
+        <p className="text-xs text-green-400 font-mono mb-2">${product.priceUsd}</p>
+        {data.tracking && (
+          <div className="bg-black/40 p-2 rounded-lg mb-2">
+            <p className="text-[10px] text-white/50 uppercase mb-1">Tracking</p>
+            <p className="text-xs text-blue-300 font-mono break-all">{data.tracking}</p>
+          </div>
+        )}
+        {!isVendor && (
+          <div className="space-y-2">
+            <button 
+              onClick={(e) => { e.stopPropagation(); onAction?.('confirm_delivery', msg); }}
+              className="w-full bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-2.5 rounded-lg transition-colors"
+            >
+              Confirm Received
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onAction?.('report_issue', msg); }}
+              className="w-full bg-white/5 hover:bg-red-500/10 border border-white/10 hover:border-red-500/30 text-white/50 hover:text-red-400 text-[10px] font-bold py-1.5 rounded-lg transition-colors"
+            >
+              Report an Issue
+            </button>
+          </div>
+        )}
+        {isVendor && (
+          <p className="text-[10px] text-white/50 text-center italic">Waiting for buyer to confirm...</p>
+        )}
+      </div>
+    );
+  }
+
+  if (data.status === 'cancelled') {
+    return (
+      <div className="bg-[#1c1c1e] border border-white/10 rounded-xl p-3 mb-2 min-w-[240px] opacity-60">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-2 h-2 rounded-full bg-red-500" />
+          <p className="text-xs font-bold text-red-400 uppercase tracking-wider">Order Cancelled</p>
+        </div>
+        <p className="text-sm font-bold text-white/60 mb-1 line-through">{product.title}</p>
+        <p className="text-xs text-white/40 font-mono line-through">${product.priceUsd}</p>
+      </div>
+    );
+  }
+
+  if (data.status === 'disputed') {
+    return (
+      <div className="bg-[#1c1c1e] border border-red-500/40 rounded-xl p-3 mb-2 min-w-[240px]">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          <p className="text-xs font-bold text-red-400 uppercase tracking-wider">⚠️ Disputed</p>
+        </div>
+        <p className="text-sm font-bold text-white mb-1">{product.title}</p>
+        <p className="text-xs text-green-400 font-mono mb-2">${product.priceUsd}</p>
+        {data.disputeReason && (
+          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2">
+            <p className="text-[10px] text-red-400 uppercase font-bold mb-1">Reason</p>
+            <p className="text-xs text-white/80">{data.disputeReason}</p>
+          </div>
+        )}
+        <p className="text-[10px] text-white/40 text-center italic mt-2">Vendor and buyer must resolve directly</p>
+      </div>
+    );
+  }
+
+  if (data.status === 'completed') {
+    return (
+      <div className="bg-[#1c1c1e] border border-green-500/40 rounded-xl p-3 mb-2 min-w-[240px]">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-2 h-2 rounded-full bg-green-500" />
+          <p className="text-xs font-bold text-green-400 uppercase tracking-wider">✓ Delivered</p>
+        </div>
+        <p className="text-sm font-bold text-white mb-1">{product.title}</p>
+        <p className="text-xs text-green-400 font-mono">${product.priceUsd}</p>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+
+function CountdownTimer({ dropUntil, onExpire }) {
+  const [timeLeft, setTimeLeft] = useState(dropUntil - Math.floor(Date.now() / 1000));
+
+  useEffect(() => {
+    if (timeLeft <= 0) {
+      if (onExpire) onExpire();
+      return;
+    }
+    const interval = setInterval(() => {
+      const remaining = dropUntil - Math.floor(Date.now() / 1000);
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        clearInterval(interval);
+        if (onExpire) onExpire();
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [dropUntil, timeLeft, onExpire]);
+
+  if (timeLeft <= 0) return null;
+
+  const hours = Math.floor(timeLeft / 3600);
+  const minutes = Math.floor((timeLeft % 3600) / 60);
+  const seconds = timeLeft % 60;
+  const formatted = hours > 0 
+    ? `${hours}h ${minutes}m ${seconds}s` 
+    : `${minutes}m ${seconds}s`;
+
+  // Pulse red when under 60 seconds
+  const isUrgent = timeLeft < 60;
+
+  return (
+    <div className={`flex items-center gap-1.5 text-xs font-bold font-mono px-2 py-1 rounded-lg mb-2 ${isUrgent ? 'bg-red-500/20 text-red-400 animate-pulse' : 'bg-green-500/20 text-green-400'}`}>
+      <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+      ⚡ DROP ENDS IN {formatted}
+    </div>
+  );
+}

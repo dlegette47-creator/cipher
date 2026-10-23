@@ -1,0 +1,21 @@
+export const generalRelays = [
+  'wss://relay.primal.net',
+  'wss://groups.aegispayhq.com'
+];
+
+export const groupRelays = [
+  'wss://groups.aegispayhq.com'
+];
+
+export const searchRelays = [
+  'wss://relay.primal.net',
+  'wss://relay.vertexlab.io',
+  'wss://relay.noswhere.com'
+];
+
+export const queryWithTimeout = (pool, relays, filter, timeoutMs = 4000) => {
+  return Promise.race([
+    pool.querySync(relays, filter).catch(() => []),
+    new Promise(resolve => setTimeout(() => resolve([]), timeoutMs))
+  ]);
+};

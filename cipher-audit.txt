@@ -1,0 +1,2091 @@
+### AUDIT 2026-10-22T16:54:48Z ###
+
+########## 1. TREE ##########
+src/App.jsx
+src/Chat.jsx
+src/components/Calculator.jsx
+src/components/chat/ChatHeader.jsx
+src/components/chat/ChatList.jsx
+src/components/chat/ChatListSkeleton.jsx
+src/components/chat/ChatPinnedBar.jsx
+src/components/chat/ChatReplyPreview.jsx
+src/components/chat/CreateGroupModal.jsx
+src/components/chat/FloatingMenu.jsx
+src/components/chat/ForwardModal.jsx
+src/components/chat/FullEmojiPicker.jsx
+src/components/chat/MessageActionsSheet.jsx
+src/components/chat/MyProfileModal.jsx
+src/components/chat/OrderManagerModal.jsx
+src/components/chat/ReviewModal.jsx
+src/components/chat/SearchView.jsx
+src/components/chat/VendorDashboard.jsx
+src/components/LockScreen.jsx
+src/components/MessageBubble.jsx
+src/components/MessageInput.jsx
+src/components/OneTapCheckout.jsx
+src/components/ProfileModal.jsx
+src/components/ShopView.jsx
+src/components/TutorialModal.jsx
+src/db.js
+src/hooks/useNIP29Group.js
+src/hooks/useNIP44DM.js
+src/hooks/usePanicWipe.js
+src/hooks/useReactions.js
+src/hooks/useReputation.js
+src/hooks/useVendorStats.js
+src/lib/haptics.js
+src/lib/media.js
+src/lib/myGroups.js
+src/lib/pool.js
+src/lib/relays.js
+src/LockScreen.jsx
+src/main.jsx
+src/ndk.js
+src/Shop.jsx
+src/store/chatStore.js
+src/store.js
+src/useIdentity.js
+src/useProfiles.js
+src/Wallet.jsx
+
+########## 2. LINE COUNTS ##########
+     5 src/lib/haptics.js
+    10 src/main.jsx
+    10 src/store.js
+    17 src/components/chat/ChatListSkeleton.jsx
+    21 src/lib/relays.js
+    23 src/lib/myGroups.js
+    28 src/components/chat/ChatReplyPreview.jsx
+    33 src/lib/media.js
+    33 src/ndk.js
+    36 src/components/chat/FullEmojiPicker.jsx
+    42 src/components/chat/CreateGroupModal.jsx
+    49 src/lib/pool.js
+    51 src/components/chat/ChatPinnedBar.jsx
+    55 src/hooks/useVendorStats.js
+    58 src/components/chat/FloatingMenu.jsx
+    71 src/components/LockScreen.jsx
+    73 src/hooks/useReactions.js
+    75 src/components/Calculator.jsx
+    75 src/components/MessageInput.jsx
+    77 src/components/chat/ReviewModal.jsx
+    85 src/components/chat/ForwardModal.jsx
+    87 src/components/chat/OrderManagerModal.jsx
+    92 src/useProfiles.js
+    94 src/components/chat/MessageActionsSheet.jsx
+    97 src/db.js
+   104 src/components/chat/SearchView.jsx
+   105 src/App.jsx
+   105 src/components/chat/ChatList.jsx
+   105 src/components/TutorialModal.jsx
+   105 src/hooks/usePanicWipe.js
+   115 src/components/chat/ChatHeader.jsx
+   117 src/components/ShopView.jsx
+   125 src/components/chat/MyProfileModal.jsx
+   134 src/components/OneTapCheckout.jsx
+   141 src/store/chatStore.js
+   167 src/components/MessageBubble.jsx
+   170 src/hooks/useNIP44DM.js
+   180 src/components/chat/VendorDashboard.jsx
+   184 src/Shop.jsx
+   194 src/hooks/useReputation.js
+   216 src/components/ProfileModal.jsx
+   254 src/LockScreen.jsx
+   267 src/useIdentity.js
+   410 src/hooks/useNIP29Group.js
+   569 src/Wallet.jsx
+  1927 src/Chat.jsx
+  6991 total
+
+########## 3. SYMBOL LOCATIONS ##########
+src/Chat.jsx:238:      const evs = await queryWithTimeout(pool, groupRelays, { kinds: [39002], '#d': [id], '#h': [id] });
+src/Chat.jsx:1298:  const createGroup = async (e) => {
+src/Chat.jsx:1318:      console.log("[createGroup] groupId:", groupId);
+src/Chat.jsx:1358:      console.error("[createGroup] FAILED:", err); 
+src/Chat.jsx:1463:              <CreateGroupModal createGroup={createGroup} />
+src/Chat.jsx:1820:                                const ev = finalizeEvent({ kind: 9001, created_at: Math.floor(Date.now() / 1000), tags: [['h', activeGroup.id], ['p', member.pubkey]], content: '' }, identity.sk);
+src/db.js:9:  const d = new Dexie(name);
+src/components/chat/CreateGroupModal.jsx:4:export default function CreateGroupModal({ createGroup }) {
+src/components/chat/CreateGroupModal.jsx:22:        <form onSubmit={(e) => { e.preventDefault(); createGroup(e); }} className="space-y-4">
+src/components/MessageBubble.jsx:126:        {data.forwardedFrom && (
+src/components/MessageBubble.jsx:128:            <Forward size={12} /> Forwarded from {data.forwardedFrom}
+src/hooks/useNIP29Group.js:33:  const createGroup = useCallback(async (name, about, isChannel) => {
+src/hooks/useNIP29Group.js:162:  const kickMember = useCallback(async (groupId, memberPubkey) => {
+src/hooks/useNIP29Group.js:166:      kind: 9001, created_at: Math.floor(Date.now() / 1000),
+src/hooks/useNIP29Group.js:189:      const evs = await queryWithTimeout(pool, groupRelays, { kinds: [39002], '#d': [groupId], '#h': [groupId] });
+src/hooks/useNIP29Group.js:397:    createGroup,
+src/hooks/useNIP29Group.js:402:    kickMember,
+
+########## 4. SMALL FILES (full) ##########
+
+===== BEGIN src/db.js =====
+// src/db.js
+import Dexie from 'dexie';
+
+let _current = null;
+let _currentOwner = null;
+let _warnedOnce = false;
+
+function makeDB(name) {
+  const d = new Dexie(name);
+  d.version(7).stores({
+    messages: 'id, chatId, pubkey, timestamp, clientId, type',
+    profiles: 'pubkey, name, displayName',
+    groups: 'id, name',
+    chatReads: 'chatId'
+  });
+  return d;
+}
+
+export function openDBFor(pubkey) {
+  if (!pubkey) return null;
+  if (_currentOwner === pubkey && _current) return _current;
+  if (_current) { try { _current.close(); } catch (_) {} }
+  const name = 'CipherDB_v6_' + pubkey.slice(0, 16);
+  _current = makeDB(name);
+  _currentOwner = pubkey;
+  return _current;
+}
+
+export function closeDB() {
+  if (_current) { try { _current.close(); } catch (_) {} }
+  _current = null;
+  _currentOwner = null;
+}
+
+export function currentOwner() { return _currentOwner; }
+
+// Safe stub returned when accessed before openDBFor().
+// Reads return empty, writes no-op. Prevents pre-login crashes.
+const stubTable = () => ({
+  toArray: () => Promise.resolve([]),
+  get: () => Promise.resolve(undefined),
+  put: () => Promise.resolve(),
+  add: () => Promise.resolve(),
+  clear: () => Promise.resolve(),
+  delete: () => Promise.resolve(),
+  count: () => Promise.resolve(0),
+  where: () => ({
+    equals: () => ({
+      sortBy: () => Promise.resolve([]),
+      toArray: () => Promise.resolve([]),
+    }),
+    sortBy: () => Promise.resolve([]),
+    toArray: () => Promise.resolve([]),
+  }),
+  filter: () => ({ toArray: () => Promise.resolve([]) }),
+});
+
+export const db = new Proxy({}, {
+  get(_t, prop) {
+    if (!_current) {
+      if (!_warnedOnce) {
+        _warnedOnce = true;
+        console.warn('[db] accessed before openDBFor — returning empty stubs');
+      }
+      if (['messages', 'chatReads', 'profiles', 'groups'].includes(prop)) {
+        return stubTable();
+      }
+      return () => Promise.resolve();
+    }
+    const v = _current[prop];
+    return typeof v === 'function' ? v.bind(_current) : v;
+  },
+});
+
+export const saveMessage = async (chatId, msg) => {
+  try { await db.messages.put({ ...msg, chatId }); } catch (e) { console.error(e); }
+};
+
+export const getMessages = async (chatId) => {
+  return await db.messages.where('chatId').equals(chatId).sortBy('timestamp');
+};
+
+export const saveProfile = async (profile) => {
+  try { await db.profiles.put(profile); } catch (e) { console.error(e); }
+};
+
+export const getProfile = async (pubkey) => {
+  return await db.profiles.get(pubkey);
+};
+
+export const searchProfilesLocal = async (query) => {
+  const lowerQuery = query.toLowerCase();
+  return await db.profiles.filter(p =>
+    (p.name && p.name.toLowerCase().includes(lowerQuery)) ||
+    (p.displayName && p.displayName.toLowerCase().includes(lowerQuery))
+  ).toArray();
+};
+===== END src/db.js =====
+
+===== BEGIN src/components/chat/ForwardModal.jsx =====
+import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { X, Search, Users, User, Megaphone } from 'lucide-react';
+import { useChatStore } from '../../store/chatStore';
+
+export default function ForwardModal({ isOpen, onClose, onForward }) {
+  const [query, setQuery] = useState('');
+  const dms = useChatStore((s) => s.dms);
+  const groups = useChatStore((s) => s.groups);
+  const profiles = useChatStore((s) => s.profiles);
+
+  if (!isOpen) return null;
+
+  // Build unified list of chats
+  const dmList = Object.keys(dms).map(pk => ({
+    id: pk,
+    isGroup: false,
+    name: profiles[pk]?.displayName || profiles[pk]?.name || `User ${pk.slice(0, 6)}`,
+    icon: User
+  }));
+
+  const groupList = groups.map(g => ({
+    id: g.id,
+    isGroup: true,
+    name: g.name,
+    isChannel: g.isChannel,
+    icon: g.isChannel ? Megaphone : Users
+  }));
+
+  const allChats = [...dmList, ...groupList].filter(c => 
+    c.name.toLowerCase().includes(query.toLowerCase())
+  );
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
+      <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-3xl w-full max-w-md h-[70vh] flex flex-col overflow-hidden shadow-2xl animate-slide-up">
+        
+        <div className="p-4 border-b border-white/10 flex justify-between items-center bg-[#0a0a0a]">
+          <h2 className="text-lg font-bold text-white">Forward to...</h2>
+          <button onClick={onClose} className="p-2 text-white/50 hover:text-white bg-white/5 rounded-full">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-3 border-b border-white/5 bg-[#0a0a0a]">
+          <div className="flex items-center bg-black border border-white/10 rounded-xl px-3 py-2">
+            <Search size={16} className="text-white/40 mr-2" />
+            <input 
+              type="text" 
+              placeholder="Search chats and groups..." 
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="bg-transparent text-sm text-white outline-none w-full"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2">
+          {allChats.length === 0 && (
+            <p className="text-center text-white/40 text-sm mt-10">No chats found.</p>
+          )}
+          {allChats.map((chat) => {
+            const Icon = chat.icon;
+            return (
+              <div 
+                key={chat.id}
+                onClick={() => onForward(chat.id, chat.isGroup)}
+                className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer transition-colors"
+              >
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${chat.isChannel ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                  <Icon size={20} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-white truncate">{chat.name}</p>
+                  <p className="text-[10px] text-white/40 uppercase">{chat.isGroup ? (chat.isChannel ? 'Channel' : 'Group') : 'Direct Message'}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+===== END src/components/chat/ForwardModal.jsx =====
+
+===== BEGIN src/components/MessageBubble.jsx =====
+import React from 'react';
+import { Package, CheckCircle2, Forward } from 'lucide-react';
+
+function renderMessage(text) {
+  if (!text) return null;
+  const parts = text.split(/(\|\|.*?\|\|)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('||') && part.endsWith('||')) {
+      return <span key={i} onClick={(e) => { e.currentTarget.classList.remove('blur-sm', 'text-transparent'); e.currentTarget.classList.add('text-white'); }} className="bg-surfaceLight px-1 rounded cursor-pointer blur-sm text-transparent transition-all select-none">{part.slice(2, -2)}</span>;
+    }
+    const boldParts = part.split(/(\*\*.*?\*\*)/g);
+    return boldParts.map((bp, j) => {
+      if (bp.startsWith('**') && bp.endsWith('**')) return <strong key={`${i}-${j}`}>{bp.slice(2, -2)}</strong>;
+      return bp;
+    });
+  });
+}
+
+export default function MessageBubble({
+  msg, data, showTail, repliedTo, repliedData, onSelect, isGroup,
+  onSenderClick, senderName, reactions, onReact, myPubkey, isSelected, onAction
+}) {
+  const type = data?.type || 'text';
+  const bodyText = data?.message || '';
+
+  const aggregated = (() => {
+    if (!reactions || reactions.length === 0) return [];
+    const map = {};
+    reactions.forEach((r) => {
+      if (!map[r.emoji]) map[r.emoji] = { emoji: r.emoji, count: 0, hasMine: false };
+      map[r.emoji].count++;
+      if (r.pubkey === myPubkey) map[r.emoji].hasMine = true;
+    });
+    return Object.values(map);
+  })();
+
+  return (
+    <div className={`relative flex flex-col ${msg.isSender ? 'items-end' : 'items-start'} animate-fade-in`}>
+      <div
+        onClick={() => onSelect?.(msg, data)}
+        className={`max-w-[85%] px-4 py-2 relative shadow-sm cursor-pointer group ${
+          msg.isSender
+            ? `bg-[#2b5278] text-white ${showTail ? 'rounded-2xl rounded-tr-sm' : 'rounded-2xl'}`
+            : `bg-[#182533] text-white ${showTail ? 'rounded-2xl rounded-tl-sm' : 'rounded-2xl'}`
+        } ${isSelected ? 'ring-2 ring-blue-500/50' : ''}`}
+      >
+        {repliedTo && (
+          <div className="bg-black/20 p-2 rounded-lg mb-2 border-l-2 border-blue-400 text-xs text-white/70 truncate">
+            {repliedData?.message || repliedData?.url || 'Message'}
+          </div>
+        )}
+
+        {!msg.isSender && isGroup && (
+          <p onClick={(e) => { e.stopPropagation(); onSenderClick && onSenderClick(msg.pubkey); }} className="text-[11px] text-blue-300 font-semibold mb-1 cursor-pointer hover:underline">
+            {senderName || `User ${msg.pubkey.slice(0, 4)}`}
+          </p>
+        )}
+
+        {type === 'cipher_order' && (
+          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-3 mb-2 min-w-[240px] shadow-lg">
+            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-white/10">
+              <Package size={16} className="text-blue-400" />
+              <span className="font-bold text-sm text-white">Order Receipt</span>
+            </div>
+            <div className="space-y-1 mb-2">
+              <p className="text-[11px] text-white/50 uppercase tracking-wider">Product</p>
+              <p className="text-sm font-semibold text-white truncate">{data.productName || 'Unknown Product'}</p>
+            </div>
+            <div className="flex justify-between items-center bg-black/40 p-2 rounded-lg mb-2">
+              <div>
+                <p className="text-[10px] text-white/50 uppercase">Amount</p>
+                <p className="text-sm font-bold text-green-400">${data.amountFiat ? Number(data.amountFiat).toFixed(2) : '0.00'}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-white/50 uppercase">Crypto</p>
+                <p className="text-[11px] font-mono text-white/80">{data.amountCrypto} {data.currency?.toUpperCase()}</p>
+              </div>
+            </div>
+
+            {data.shippingAddress && (
+              <div className="bg-black/40 p-2 rounded-lg mb-2">
+                <p className="text-[10px] text-white/50 uppercase mb-1">Ship To</p>
+                <p className="text-xs text-white/90 whitespace-pre-wrap">{data.shippingAddress}</p>
+              </div>
+            )}
+
+            <div className="mt-2 flex flex-col gap-2">
+              <div className="flex justify-center">
+                <span className={`text-[10px] font-bold px-3 py-1 rounded-full border ${
+                  data.status === 'completed' ? 'text-green-400 bg-green-400/10 border-green-400/20' :
+                  data.status === 'shipped' ? 'text-purple-400 bg-purple-400/10 border-purple-400/20' :
+                  data.status === 'accepted' ? 'text-blue-400 bg-blue-400/10 border-blue-400/20' :
+                  'text-yellow-400 bg-yellow-400/10 border-yellow-400/20'
+                }`}>
+                  {(data.status || 'payment_sent').replace('_', ' ').toUpperCase()}
+                </span>
+              </div>
+
+              {msg.isSender && data.status !== 'completed' && onAction && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onAction('confirm_delivery', msg); }}
+                  className="w-full mt-1 bg-green-500 hover:bg-green-400 text-black text-sm font-black uppercase tracking-wider py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(34,197,94,0.4)] active:scale-95"
+                >
+                  Confirm Delivery
+                </button>
+              )}
+
+              {!msg.isSender && data.status !== 'completed' && (
+                <p className="text-[10px] text-white/40 text-center italic">Waiting for buyer to confirm delivery...</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {type === 'image' && (
+          <div className="relative">
+            <img src={data.url} className="rounded-lg max-h-60 object-cover mb-1" />
+            {data.metadata_stripped && (
+              <div className="absolute bottom-2 right-2 bg-black/70 text-[9px] text-green-400 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 border border-green-500/30">
+                🛡️ SAFE
+              </div>
+            )}
+          </div>
+        )}
+        {type === 'audio' && <audio controls src={data.url} className="max-w-full h-10 mb-1" />}
+        {data.forwardedFrom && (
+          <div className="flex items-center gap-1 text-[11px] text-blue-300/80 italic mb-1">
+            <Forward size={12} /> Forwarded from {data.forwardedFrom}
+          </div>
+        )}
+        {type === 'text' && <p className="text-[15px] leading-snug break-words overflow-hidden w-full">{renderMessage(bodyText)}</p>}
+
+        {type === 'order_update' && (
+          <div className="bg-blue-600/20 border border-blue-500/30 rounded-xl p-3 mb-2 flex items-center gap-3">
+            <CheckCircle2 size={20} className="text-blue-400" />
+            <div>
+              <p className="text-sm font-bold text-white">Order Update</p>
+              <p className="text-xs text-blue-300">Vendor marked order as <strong>{data.status?.toUpperCase()}</strong></p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-1 mt-1 opacity-60">
+          <span className="text-[10px]">{new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        </div>
+      </div>
+
+      {aggregated.length > 0 && (
+        <div className={`flex flex-wrap gap-1 mt-1 ${msg.isSender ? 'justify-end' : 'justify-start'}`}>
+          {aggregated.map((r) => (
+            <button
+              key={r.emoji}
+              onClick={(e) => { e.stopPropagation(); onReact && onReact(r.emoji); }}
+              className={`text-[11px] px-2 py-0.5 rounded-full transition-colors ${
+                r.hasMine
+                  ? 'bg-blue-500/30 border border-blue-400/60 text-white'
+                  : 'bg-white/10 border border-white/10 text-white/80 hover:bg-white/20'
+              }`}
+            >
+              {r.emoji} {r.count}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+===== END src/components/MessageBubble.jsx =====
+
+===== BEGIN src/App.jsx =====
+import React, { useState, useEffect } from 'react'
+import { haptic } from './lib/haptics';
+import { MessageSquare, Compass, User } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useIdentity } from './useIdentity'
+import { useChatStore } from './store/chatStore'
+import { usePanicWipe } from './hooks/usePanicWipe'
+import TutorialModal from './components/TutorialModal'
+import LockScreen from './LockScreen'
+import Shop from './Shop'
+import Chat from './Chat'
+import Wallet from './Wallet' 
+
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-black text-red-500 p-6 font-mono flex flex-col items-center justify-center">
+          <h1 className="text-2xl font-bold mb-4">App Crashed</h1>
+          <pre className="text-xs whitespace-pre-wrap bg-red-900/20 p-4 rounded-xl border border-red-500/50 w-full max-w-md overflow-auto">{this.state.error.toString()}</pre>
+          <button onClick={() => window.location.reload()} className="mt-6 px-6 py-3 bg-white text-black font-bold rounded-xl">Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function MainApp() {
+  const identity = useIdentity()
+  const panicWipeEnabled = useChatStore((s) => s.panicWipeEnabled);
+  const theme = useChatStore((s) => s.theme);
+  usePanicWipe(identity, panicWipeEnabled);
+  if (identity?.pk) console.log('YOUR PUBKEY:', identity.pk)
+  const [activeTab, setActiveTab] = useState('chat')
+
+  useEffect(() => {
+    if (theme === 'dark') document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
+  }, [theme]);
+
+
+  useEffect(() => {
+    if (identity?.pk && localStorage.getItem('cipher_new_account') === 'true') {
+      setShowTutorial(true);
+    }
+  }, [identity?.pk]);
+
+  const [showTutorial, setShowTutorial] = useState(false)
+    
+
+  if (identity.loadingSession) {
+    return <div className="h-screen bg-black flex items-center justify-center"><div className="w-8 h-8 border-4 border-white/20 border-t-white rounded-full animate-spin"></div></div>;
+  }
+
+  if (!identity.sk) return <LockScreen identity={identity} />
+
+  return (
+    <div className="h-full w-full bg-base text-white overflow-hidden flex justify-center">
+      <TutorialModal isOpen={showTutorial} onClose={() => { setShowTutorial(false); localStorage.removeItem('cipher_new_account'); }} />
+      <main className="w-full max-w-md h-full relative overflow-hidden">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="h-full flex flex-col overflow-hidden"
+          >
+            {activeTab === 'chat' && <Chat identity={identity} />}
+            {activeTab === 'explore' && <Shop identity={identity} setActiveTab={setActiveTab} />}
+            {activeTab === 'profile' && <Wallet identity={identity} />}
+          </motion.div>
+        </AnimatePresence>
+      </main>
+
+      <motion.nav 
+        initial={{ y: 50 }} animate={{ y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30 }}
+        className="fixed bottom-0 left-0 right-0 z-50 bg-base/90 backdrop-blur-xl border-t border-white/10 pb-safe"
+      >
+        <div className="flex justify-around items-center h-16 max-w-md mx-auto px-6">
+          <button onClick={() => { haptic(10); setActiveTab('chat'); }} className={`flex flex-col items-center justify-center gap-1 w-16 h-full outline-none focus:outline-none focus:ring-0 transition-all active:scale-90 ${activeTab === 'chat' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+            <MessageSquare size={22} strokeWidth={activeTab === 'chat' ? 2.5 : 2} strokeLinecap="round" className={activeTab === 'chat' ? 'text-blue-500' : ''} />
+            <span className="text-[10px] font-medium">Chats</span>
+          </button>
+          <button onClick={() => { haptic(10); setActiveTab('explore'); }} className={`flex flex-col items-center justify-center gap-1 w-16 h-full outline-none focus:outline-none focus:ring-0 transition-all active:scale-90 ${activeTab === 'explore' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+            <Compass size={22} strokeWidth={activeTab === 'explore' ? 2.5 : 2} className={activeTab === 'explore' ? 'text-blue-500' : ''} />
+            <span className="text-[10px] font-medium">Explore</span>
+          </button>
+          <button onClick={() => { haptic(10); setActiveTab('profile'); }} className={`flex flex-col items-center justify-center gap-1 w-16 h-full outline-none focus:outline-none focus:ring-0 transition-all active:scale-90 ${activeTab === 'profile' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+            <User size={22} strokeWidth={activeTab === 'profile' ? 2.5 : 2} className={activeTab === 'profile' ? 'text-blue-500' : ''} />
+            <span className="text-[10px] font-medium">Profile</span>
+          </button>
+        </div>
+      </motion.nav>
+    </div>
+  )
+}
+
+export default function App() {
+  return <ErrorBoundary><MainApp /></ErrorBoundary>
+}
+===== END src/App.jsx =====
+
+########## 5. HOOKS (full) ##########
+
+===== BEGIN src/hooks/useNIP29Group.js =====
+import { useCallback } from 'react';
+import { useChatStore } from '../store/chatStore';
+import { getAuthenticatedPool } from '../lib/pool';
+import { groupRelays, queryWithTimeout } from '../lib/relays';
+import { saveMessage } from '../db';
+import { getMyGroups, setMyGroups } from '../lib/myGroups';
+
+export function useNIP29Group({ identity }) {
+  const setGroupsStore = useChatStore((s) => s.setGroups);
+  const setGroups = useCallback((val) => {
+    setGroupsStore((prev) => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      // Strict filter: only allow groups the user has explicitly joined/created.
+      // This kills the relay WS listener that injects "lmfao".
+      const myGroupIds = new Set(getMyGroups(identity?.pk).map(g => g.id));
+      return next.filter(g => myGroupIds.has(g.id));
+    });
+  }, [identity?.pk, setGroupsStore]);
+  const setGroupMessages = useChatStore((s) => s.setGroupMessages);
+  const setGroupMembers = useChatStore((s) => s.setGroupMembers);
+  const setGroupTypingUsers = useChatStore((s) => s.setGroupTypingUsers);
+  const setPinnedMessages = useChatStore((s) => s.setPinnedMessages);
+  const activeGroup = useChatStore((s) => s.activeGroup);
+
+  const sortMessages = (a, b) => {
+    const tA = a.local_timestamp || (a.timestamp * 1000);
+    const tB = b.local_timestamp || (b.timestamp * 1000);
+    if (tA !== tB) return tA - tB;
+    return (a.id || '').localeCompare(b.id || '');
+  };
+
+  // CREATE GROUP
+  const createGroup = useCallback(async (name, about, isChannel) => {
+    const { finalizeEvent } = await import('nostr-tools');
+    const pool = await getAuthenticatedPool(identity);
+    const groupId = (globalThis.crypto?.randomUUID?.() || Date.now().toString()).replace(/-/g, '').slice(0, 16);
+
+    const createEv = finalizeEvent({
+      kind: 9007, created_at: Math.floor(Date.now() / 1000),
+      tags: [['h', groupId], ['name', name], ['about', about || ''], ['open'], ['p', identity.pk, 'admin']],
+      content: ''
+    }, identity.sk);
+
+    const r9007 = await Promise.allSettled(pool.publish(groupRelays, createEv));
+    const ok = r9007.some(r => r.status === 'fulfilled');
+    if (!ok) throw new Error('No relay accepted 9007');
+
+    const metaTags = [['h', groupId], ['name', name], ['about', about || '']];
+    if (isChannel) {
+      metaTags.push(['channel', 'true']);
+      metaTags.push(['broadcast', 'true']);
+    }
+    
+    const metaEv = finalizeEvent({
+      kind: 9002, created_at: Math.floor(Date.now() / 1000),
+      tags: metaTags,
+      content: ''
+    }, identity.sk);
+    await Promise.allSettled(pool.publish(groupRelays, metaEv));
+
+    const joinEv = finalizeEvent({
+      kind: 9021, created_at: Math.floor(Date.now() / 1000),
+      tags: [['h', groupId]], content: 'Creator'
+    }, identity.sk);
+    await Promise.allSettled(pool.publish(groupRelays, joinEv));
+
+    const newGroup = { id: groupId, name, about: about || '', isChannel, creator: identity.pk, members: [identity.pk] };
+
+    const localGroups = getMyGroups(identity.pk);
+    if (!localGroups.find(g => g.id === groupId)) {
+      localGroups.push(newGroup);
+      setMyGroups(identity.pk, localGroups);
+    }
+    setGroups(prev => [newGroup, ...(prev || []).filter(g => g.id !== groupId)]);
+
+    return newGroup;
+  }, [identity, setGroups]);
+
+  // JOIN GROUP
+  const joinGroupById = useCallback(async (groupId, passedName = null) => {
+    if (!groupId) return;
+    let realName = passedName || 'Unnamed Group';
+
+    const localGroups = getMyGroups(identity.pk);
+    const localMatch = localGroups.find(g => g.id === groupId);
+    if (!passedName && localMatch?.name && localMatch.name !== 'Unnamed Group') {
+      realName = localMatch.name;
+    } else if (!passedName) {
+      try {
+        const pool = await getAuthenticatedPool(identity);
+        const events = await queryWithTimeout(pool, groupRelays, { kinds: [9002], limit: 200 }, 3000);
+        const match = events.find(ev => ev.tags.find(t => t[0] === 'h')?.[1] === groupId);
+        if (match) {
+          const nameTag = match.tags.find(t => t[0] === 'name')?.[1];
+          if (nameTag) realName = nameTag;
+        }
+      } catch (e) {}
+    }
+
+    if (realName === 'Unnamed Group') {
+      const userInput = window.prompt('What is this group called?', '');
+      if (userInput && userInput.trim()) realName = userInput.trim();
+    }
+
+    const newGroup = { id: groupId, name: realName, isChannel: false, creator: '' };
+    const idx = localGroups.findIndex(g => g.id === groupId);
+    if (idx === -1) localGroups.push(newGroup);
+    else localGroups[idx].name = realName;
+    setMyGroups(identity.pk, localGroups);
+    setGroups(prev => [newGroup, ...(prev || []).filter(g => g.id !== groupId)]);
+
+    return newGroup;
+  }, [identity, setGroups]);
+
+  // LEAVE GROUP
+  const leaveGroup = useCallback(async (groupId) => {
+    const { finalizeEvent } = await import('nostr-tools');
+    const pool = await getAuthenticatedPool(identity);
+    const leaveEv = finalizeEvent({
+      kind: 9022, created_at: Math.floor(Date.now() / 1000),
+      tags: [['h', groupId]], content: ''
+    }, identity.sk);
+    await Promise.allSettled(pool.publish(groupRelays, leaveEv));
+
+    const localGroups = getMyGroups(identity.pk);
+    const updated = localGroups.filter(g => g.id !== groupId);
+    setMyGroups(identity.pk, updated);
+    setGroups(updated);
+  }, [identity, setGroups]);
+
+  // SEND GROUP MESSAGE
+  const sendGroupMessage = useCallback(async (groupId, payload, clientId = null, replyId = null) => {
+    const { finalizeEvent } = await import('nostr-tools');
+    const pool = await getAuthenticatedPool(identity);
+    const tags = [['h', groupId]];
+    if (clientId) tags.push(['client', clientId]);
+    if (replyId) tags.push(['e', replyId, '', 'reply']);
+
+    const event = finalizeEvent({
+      kind: 9, created_at: Math.floor(Date.now() / 1000),
+      tags, content: JSON.stringify(payload)
+    }, identity.sk);
+
+    const results = await Promise.allSettled(pool.publish(groupRelays, event));
+    return { success: true, event, results };
+  }, [identity]);
+
+  // SEND GROUP TYPING INDICATOR
+  const sendGroupTypingIndicator = useCallback(async (groupId) => {
+    try {
+      const { finalizeEvent } = await import('nostr-tools');
+      const pool = await getAuthenticatedPool(identity);
+      const ev = finalizeEvent({
+        kind: 9, created_at: Math.floor(Date.now() / 1000),
+        tags: [['h', groupId]], content: JSON.stringify({ type: 'typing' })
+      }, identity.sk);
+      pool.publish(groupRelays, ev);
+    } catch (e) {}
+  }, [identity]);
+
+  // ADMIN ACTIONS
+  const kickMember = useCallback(async (groupId, memberPubkey) => {
+    const { finalizeEvent } = await import('nostr-tools');
+    const pool = await getAuthenticatedPool(identity);
+    const ev = finalizeEvent({
+      kind: 9001, created_at: Math.floor(Date.now() / 1000),
+      tags: [['h', groupId], ['p', memberPubkey]], content: ''
+    }, identity.sk);
+    await Promise.allSettled(pool.publish(groupRelays, ev));
+    setGroupMembers(prev => prev.filter(m => m.pubkey !== memberPubkey));
+  }, [identity, setGroupMembers]);
+
+  const promoteMember = useCallback(async (groupId, memberPubkey, isAdmin) => {
+    const { finalizeEvent } = await import('nostr-tools');
+    const pool = await getAuthenticatedPool(identity);
+    const ev = finalizeEvent({
+      kind: 9000, created_at: Math.floor(Date.now() / 1000),
+      tags: [['h', groupId], ['p', memberPubkey], ['role', isAdmin ? 'member' : 'admin']],
+      content: ''
+    }, identity.sk);
+    await Promise.allSettled(pool.publish(groupRelays, ev));
+    setGroupMembers(prev => prev.map(m => m.pubkey === memberPubkey ? { ...m, role: isAdmin ? 'member' : 'admin' } : m));
+  }, [identity, setGroupMembers]);
+
+  // FETCH MEMBERS
+  const fetchGroupMembers = useCallback(async (groupId) => {
+    try {
+      const pool = await getAuthenticatedPool(identity);
+      const evs = await queryWithTimeout(pool, groupRelays, { kinds: [39002], '#d': [groupId], '#h': [groupId] });
+      if (evs.length) {
+        const t = evs[0].tags.filter(x => x[0] === 'p');
+        const m = t.map(x => ({ pubkey: x[1], role: x[2] || 'member' }));
+        if (!m.find(x => x.pubkey === identity.pk)) {
+          m.push({ pubkey: identity.pk, role: activeGroup?.creator === identity.pk ? 'admin' : 'member' });
+        }
+        setGroupMembers(m);
+        return m.map(x => x.pubkey);
+      }
+      return [];
+    } catch (err) {
+      console.error('[useNIP29Group] fetchGroupMembers failed:', err);
+      return [];
+    }
+  }, [identity, activeGroup, setGroupMembers]);
+
+  // RAW WEBSOCKET SUBSCRIPTION (NIP-42 AUTH + join + subscribe)
+  const subscribeToGroups = useCallback((groupIds, since) => {
+    if (!groupIds || groupIds.length === 0) return () => {};
+
+    let ws;
+    let authSent = false;
+    let sentReq = false;
+    let isMounted = true;
+
+    const connect = () => {
+      ws = new WebSocket('wss://groups.aegispayhq.com');
+
+      ws.onopen = () => console.log('✅ Group WS connected');
+
+      ws.onmessage = async (e) => {
+        if (!isMounted) return;
+        const msg = JSON.parse(e.data);
+
+        if (msg[0] === 'AUTH') {
+          if (authSent) return;
+          authSent = true;
+          const { finalizeEvent } = await import('nostr-tools');
+          const challenge = typeof msg[1] === 'string' ? msg[1] : msg[1].challenge;
+          const authEv = finalizeEvent({
+            kind: 22242, created_at: Math.floor(Date.now() / 1000),
+            tags: [['relay', 'wss://groups.aegispayhq.com'], ['challenge', challenge]],
+            content: ''
+          }, identity.sk);
+          ws.send(JSON.stringify(['AUTH', authEv]));
+          console.log('➡️ Group WS sent AUTH');
+        }
+        else if (msg[0] === 'OK' && msg[2] === true && !sentReq) {
+          sentReq = true;
+          console.log('✅ Group WS Auth OK');
+          const { finalizeEvent } = await import('nostr-tools');
+
+          for (const gid of groupIds) {
+            const adminEv = finalizeEvent({
+              kind: 9000, created_at: Math.floor(Date.now() / 1000),
+              tags: [['h', gid], ['p', identity.pk], ['role', 'admin']], content: ''
+            }, identity.sk);
+            ws.send(JSON.stringify(['EVENT', adminEv]));
+          }
+
+          setTimeout(() => {
+            if (!isMounted) return;
+            for (const gid of groupIds) {
+              const joinEv = finalizeEvent({
+                kind: 9021, created_at: Math.floor(Date.now() / 1000),
+                tags: [['h', gid]], content: 'Auto-join'
+              }, identity.sk);
+              ws.send(JSON.stringify(['EVENT', joinEv]));
+            }
+
+            setTimeout(() => {
+              if (!isMounted) return;
+              for (const gid of groupIds) {
+                ws.send(JSON.stringify(['REQ', `group-sub-${gid}`, { kinds: [7, 9], '#h': [gid], since }]));
+              }
+              console.log('✅ Group WS sent individual REQs');
+            }, 1500);
+          }, 1000);
+        }
+        else if (msg[0] === 'EVENT' && msg[1].startsWith('group-sub-')) {
+          const event = msg[2];
+          const hTag = event.tags.find(t => t[0] === 'h');
+          if (!hTag) return;
+          const groupId = hTag[1];
+
+          // Handle Reaction Events
+          if (event.kind === 7) {
+            const targetId = event.tags.find(t => t[0] === 'e')?.[1];
+            if (targetId) {
+              useChatStore.getState().setReactions(prev => {
+                const existing = prev[targetId] || [];
+                if (existing.find(r => r.pubkey === event.pubkey && r.emoji === event.content)) return prev;
+                return { ...prev, [targetId]: [...existing, { emoji: event.content, pubkey: event.pubkey }] };
+              });
+            }
+            return;
+          }
+
+          let parsed = {};
+          try { parsed = JSON.parse(event.content); } catch (e) {}
+          if (parsed.type === 'typing') {
+            const age = (Date.now() / 1000) - event.created_at;
+            if (age < 10 && event.pubkey !== identity.pk) {
+              setGroupTypingUsers(prev => ({ ...prev, [event.pubkey]: Date.now() }));
+            }
+            return;
+          }
+
+          const replyTag = event.tags.find(t => t[0] === 'e' && t[3] === 'reply');
+          const clientId = event.tags.find(t => t[0] === 'client')?.[1];
+
+          setGroupMessages(prev => {
+            const groupMsgs = prev[groupId] || [];
+            const existingIndex = groupMsgs.findIndex(m => {
+              if (clientId && m.clientId === clientId) return true;
+              if (m.isSender === (event.pubkey === identity.pk) && parsed.message) {
+                let oldData = {};
+                try { oldData = JSON.parse(m.rawContent || '{}'); } catch(e) {}
+                return oldData.message === parsed.message && Math.abs(m.timestamp - event.created_at) < 5;
+              }
+              return false;
+            });
+
+            if (existingIndex >= 0) {
+              const newMsgs = [...groupMsgs];
+              newMsgs[existingIndex] = { ...newMsgs[existingIndex], id: event.id, clientId };
+              saveMessage(groupId, newMsgs[existingIndex]);
+              return { ...prev, [groupId]: newMsgs };
+            } else {
+              const newMsg = {
+                id: event.id, clientId, isSender: event.pubkey === identity.pk,
+                pubkey: event.pubkey, timestamp: event.created_at,
+                local_timestamp: Date.now(), rawContent: event.content,
+                replyTo: replyTag ? replyTag[1] : null, isGroup: true
+              };
+              saveMessage(groupId, newMsg);
+              return { ...prev, [groupId]: [...groupMsgs, newMsg].sort(sortMessages) };
+            }
+          });
+        }
+        else if (msg[0] === 'CLOSED') {
+          console.log('❌ Group WS closed:', msg[2]);
+        }
+      };
+
+      ws.onclose = (e) => {
+        console.log('❌ Group WS closed:', e.reason);
+        if (isMounted) setTimeout(connect, 3000);
+      };
+
+      ws.onerror = (e) => console.error('Group WS error:', e);
+    };
+
+    connect();
+
+    return () => {
+      isMounted = false;
+      if (ws) ws.close();
+    };
+  }, [identity, setGroupMessages, setGroupTypingUsers]);
+
+  const pinMessage = useCallback(async (groupId, messageEventId) => {
+    const { finalizeEvent } = await import('nostr-tools');
+    const pool = await getAuthenticatedPool(identity);
+    const ev = finalizeEvent({
+      kind: 9005,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['h', groupId], ['e', messageEventId]],
+      content: ''
+    }, identity.sk);
+    await Promise.allSettled(pool.publish(groupRelays, ev));
+    setPinnedMessages(prev => ({ ...prev, [groupId]: messageEventId }));
+    return { success: true };
+  }, [identity, setPinnedMessages]);
+
+  const unpinMessage = useCallback(async (groupId) => {
+    const { finalizeEvent } = await import('nostr-tools');
+    const pool = await getAuthenticatedPool(identity);
+    const ev = finalizeEvent({
+      kind: 9005,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['h', groupId]],
+      content: 'unpin'
+    }, identity.sk);
+    await Promise.allSettled(pool.publish(groupRelays, ev));
+    setPinnedMessages(prev => ({ ...prev, [groupId]: null }));
+    return { success: true };
+  }, [identity, setPinnedMessages]);
+
+  const fetchPinnedMessage = useCallback(async (groupId) => {
+    try {
+      const pool = await getAuthenticatedPool(identity);
+      const events = await queryWithTimeout(pool, groupRelays, { kinds: [9005], '#h': [groupId], limit: 10 }, 3000);
+      if (events.length === 0) {
+        setPinnedMessages(prev => ({ ...prev, [groupId]: null }));
+        return null;
+      }
+      events.sort((a, b) => b.created_at - a.created_at);
+      const eTag = events[0].tags.find(t => t[0] === 'e')?.[1];
+      setPinnedMessages(prev => ({ ...prev, [groupId]: eTag || null }));
+      return eTag || null;
+    } catch (e) {
+      return null;
+    }
+  }, [identity, setPinnedMessages]);
+
+  return {
+    createGroup,
+    joinGroupById,
+    leaveGroup,
+    sendGroupMessage,
+    sendGroupTypingIndicator,
+    kickMember,
+    promoteMember,
+    fetchGroupMembers,
+    subscribeToGroups,
+    pinMessage,
+    unpinMessage,
+    fetchPinnedMessage,
+  };
+}
+===== END src/hooks/useNIP29Group.js =====
+
+===== BEGIN src/hooks/useNIP44DM.js =====
+import { useCallback } from 'react';
+import { useChatStore } from '../store/chatStore';
+import { getAuthenticatedPool } from '../lib/pool';
+import { generalRelays, queryWithTimeout } from '../lib/relays';
+import { saveMessage } from '../db';
+
+export function useNIP44DM({ identity }) {
+  const setDms = useChatStore((s) => s.setDms);
+  const setTypingUsers = useChatStore((s) => s.setTypingUsers);
+
+  const sortMessages = (a, b) => {
+    const tA = a.local_timestamp || (a.timestamp * 1000);
+    const tB = b.local_timestamp || (b.timestamp * 1000);
+    if (tA !== tB) return tA - tB;
+    return (a.id || '').localeCompare(b.id || '');
+  };
+
+  // SEND A DM
+  const sendDM = useCallback(async (recipientPubkey, payload, clientId = null, replyId = null) => {
+    if (!recipientPubkey || !identity?.sk) return { success: false, error: 'Missing params' };
+
+    // Defensive: trim and cap length
+    let targetDm = recipientPubkey.trim();
+    if (targetDm.length > 64) targetDm = targetDm.slice(0, 64);
+
+    try {
+      const { finalizeEvent, nip44 } = await import('nostr-tools');
+      const pool = await getAuthenticatedPool(identity);
+      const shared = nip44.v2.utils.getConversationKey(identity.sk, targetDm);
+      const encrypted = nip44.v2.encrypt(JSON.stringify(payload), shared);
+      const tags = [['p', targetDm]];
+      if (clientId) tags.push(['client', clientId]);
+      if (replyId) tags.push(['e', replyId, '', 'reply']);
+      const event = finalizeEvent({
+        kind: 4,
+        created_at: Math.floor(Date.now() / 1000),
+        tags,
+        content: encrypted
+      }, identity.sk);
+      const results = await Promise.allSettled(pool.publish(generalRelays, event));
+      return { success: true, event, results };
+    } catch (err) {
+      console.error('[useNIP44DM] Send failed:', err);
+      return { success: false, error: err.message };
+    }
+  }, [identity]);
+
+  // SEND TYPING INDICATOR
+  const sendTypingIndicator = useCallback(async (recipientPubkey) => {
+    if (!recipientPubkey || !identity?.sk) return;
+    try {
+      const { finalizeEvent, nip44 } = await import('nostr-tools');
+      const pool = await getAuthenticatedPool(identity);
+      const shared = nip44.v2.utils.getConversationKey(identity.sk, recipientPubkey);
+      const encrypted = nip44.v2.encrypt(JSON.stringify({ type: 'typing' }), shared);
+      const ev = finalizeEvent({
+        kind: 4,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['p', recipientPubkey]],
+        content: encrypted
+      }, identity.sk);
+      pool.publish(generalRelays, ev);
+    } catch (e) {}
+  }, [identity]);
+
+  // SUBSCRIBE TO INCOMING + OUTGOING DMs
+  const subscribeToDMs = useCallback((since) => {
+    let subs = [];
+    const mounted = { current: true };
+
+    const setup = async () => {
+      const pool = await getAuthenticatedPool(identity);
+      const dmFilters = [
+        { kinds: [4], '#p': [identity.pk], since },
+        { kinds: [4], authors: [identity.pk], since }
+      ];
+      dmFilters.forEach(filter => {
+        const sub = pool.subscribe(generalRelays, filter, {
+          onevent: async (event) => {
+            if (!mounted.current) return;
+            try {
+              const { nip44 } = await import('nostr-tools');
+              const isSender = event.pubkey === identity.pk;
+              const counterparty = isSender ? event.tags.find(t => t[0] === 'p')?.[1] : event.pubkey;
+              if (!counterparty) return;
+              const shared = nip44.v2.utils.getConversationKey(identity.sk, counterparty);
+              let text;
+              try { text = nip44.v2.decrypt(event.content, shared); }
+              catch (e) { return; }
+              let data = {};
+              try { data = JSON.parse(text); } catch (e) { data = { type: 'text', message: text }; }
+
+              if (data.type === 'typing') {
+                const age = (Date.now() / 1000) - event.created_at;
+                if (age < 10) setTypingUsers(prev => ({ ...prev, [counterparty]: Date.now() }));
+                return;
+              }
+              if (data.type === 'read' || data.type === 'pin') return;
+
+              const replyTag = event.tags.find(t => t[0] === 'e' && t[3] === 'reply');
+              const clientId = event.tags.find(t => t[0] === 'client')?.[1];
+              const newMsg = {
+                id: event.id, clientId, isSender,
+                timestamp: event.created_at, data,
+                pubkey: event.pubkey,
+                replyTo: replyTag ? replyTag[1] : null
+              };
+              await saveMessage(counterparty, newMsg);
+              setDms(prev => {
+                const chatMsgs = prev[counterparty] || [];
+                if (chatMsgs.find(m => m.id === event.id)) return prev;
+                const filtered = chatMsgs.filter(m => m.clientId !== clientId);
+                return { ...prev, [counterparty]: [...filtered, newMsg].sort(sortMessages) };
+              });
+            } catch (e) { console.error('Live DM error:', e); }
+          }
+        });
+        subs.push(sub);
+      });
+    };
+    setup();
+    return () => {
+      mounted.current = false;
+      subs.forEach(s => { try { s.close(); } catch (e) {} });
+    };
+  }, [identity, setDms, setTypingUsers]);
+
+  // FULL FETCH OF DM HISTORY
+  const fetchDMs = useCallback(async () => {
+    const pool = await getAuthenticatedPool(identity);
+    const { nip44 } = await import('nostr-tools');
+    const [sentDms, recvDms] = await Promise.all([
+      queryWithTimeout(pool, generalRelays, { kinds: [4], authors: [identity.pk], limit: 50 }),
+      queryWithTimeout(pool, generalRelays, { kinds: [4], '#p': [identity.pk], limit: 50 })
+    ]);
+    const allDms = Array.from(new Map([...sentDms, ...recvDms].map(ev => [ev.id, ev])).values());
+    for (const ev of allDms) {
+      try {
+        const isSender = ev.pubkey === identity.pk;
+        const counterparty = isSender ? ev.tags.find(t => t[0] === 'p')?.[1] : ev.pubkey;
+        if (!counterparty) continue;
+        const shared = nip44.v2.utils.getConversationKey(identity.sk, counterparty);
+        let text;
+        try { text = nip44.v2.decrypt(ev.content, shared); }
+        catch (e) { continue; }
+        let data = {};
+        try { data = JSON.parse(text); } catch (e) { data = { type: 'text', message: text }; }
+        if (data.type === 'typing' || data.type === 'read' || data.type === 'pin') continue;
+        const replyTag = ev.tags.find(t => t[0] === 'e' && t[3] === 'reply');
+        const clientId = ev.tags.find(t => t[0] === 'client')?.[1];
+        await saveMessage(counterparty, {
+          id: ev.id, clientId, isSender,
+          timestamp: ev.created_at, data,
+          pubkey: ev.pubkey,
+          replyTo: replyTag ? replyTag[1] : null,
+          isGroup: false
+        });
+      } catch (e) {}
+    }
+    const counterparties = new Set();
+    for (const ev of allDms) {
+      const isSender = ev.pubkey === identity.pk;
+      const counterparty = isSender ? ev.tags.find(t => t[0] === 'p')?.[1] : ev.pubkey;
+      if (counterparty) counterparties.add(counterparty);
+    }
+    return [...counterparties];
+  }, [identity]);
+
+  return { sendDM, sendTypingIndicator, subscribeToDMs, fetchDMs };
+}
+===== END src/hooks/useNIP44DM.js =====
+
+########## 6. RELAY / POOL / TRANSPORT (full) ##########
+
+===== BEGIN src/lib/pool.js =====
+let pools = {};
+
+export const getAuthenticatedPool = async (identity) => {
+  if (pools[identity.pk]) return pools[identity.pk];
+
+  const { SimplePool, finalizeEvent } = await import('nostr-tools');
+  const pool = new SimplePool({
+    enablePing: false,
+    enableReconnect: true,
+    onauth: async (challenge) => {
+      console.log("AUTH challenge:", challenge);
+      return finalizeEvent({
+        kind: 22242,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ["relay", "wss://groups.aegispayhq.com"],
+          ["challenge", challenge]
+        ],
+        content: ""
+      }, identity.sk);
+    }
+  });
+
+  const originalEnsure = pool.ensureRelay.bind(pool);
+  pool.ensureRelay = async (url) => {
+    const relay = await originalEnsure(url);
+    if (url.includes("aegispayhq.com") && !relay.__patchedAuth) {
+      relay.__patchedAuth = true;
+      const originalSend = relay.send.bind(relay);
+      relay.send = (msg) => {
+        try {
+          const parsed = JSON.parse(msg);
+          if (parsed[0] === "AUTH" && typeof parsed[1] === "object") {
+            msg = JSON.stringify(["AUTH", JSON.stringify(parsed[1])]);
+          }
+        } catch (e) {}
+        originalSend(msg);
+      };
+    }
+    return relay;
+  };
+
+  pools[identity.pk] = pool;
+  return pool;
+};
+
+export const clearPool = () => {
+  pools = {};
+};
+===== END src/lib/pool.js =====
+
+===== BEGIN src/lib/relays.js =====
+export const generalRelays = [
+  'wss://relay.primal.net',
+  'wss://groups.aegispayhq.com'
+];
+
+export const groupRelays = [
+  'wss://groups.aegispayhq.com'
+];
+
+export const searchRelays = [
+  'wss://relay.primal.net',
+  'wss://relay.vertexlab.io',
+  'wss://relay.noswhere.com'
+];
+
+export const queryWithTimeout = (pool, relays, filter, timeoutMs = 4000) => {
+  return Promise.race([
+    pool.querySync(relays, filter).catch(() => []),
+    new Promise(resolve => setTimeout(() => resolve([]), timeoutMs))
+  ]);
+};
+===== END src/lib/relays.js =====
+
+########## 7. AUTH / VAULT / KEY LOADING (full) ##########
+
+########## 8. Chat.jsx EXCERPTS ##########
+
+----- src/Chat.jsx :: /function sendMessage|const sendMessage|async sendMessage/ -----
+>>> line 803
+  const sendMessage = async (text, isImage = false, audioUrl = null) => {
+    if (!text.trim() && !audioUrl) return
+    const tempId = `temp-${Date.now()}`
+    
+    let msgPayload = { type: 'text', message: text }
+    if (isImage) msgPayload = { type: 'image', url: text, metadata_stripped: true }
+    if (audioUrl) msgPayload = { type: 'audio', url: audioUrl }
+    
+    const replyId = replyingTo ? replyingTo.id : null
+    
+    // ✅ STRICT ROUTING: Only use activeDm if we are actually in the DM view
+    const isDmView = view === 'dm';
+    const chatId = isDmView ? activeDm : activeGroup?.id;
+
+    const newMsg = { 
+      id: tempId, clientId: tempId, isSender: true, pubkey: identity.pk, 
+      timestamp: Math.floor(Date.now() / 1000), local_timestamp: Date.now(), replyTo: replyId 
+    }
+    
+    if (isDmView && activeDm) {
+      newMsg.data = msgPayload;
+      newMsg.isGroup = false; // ✅ Explicitly tag as DM
+      setDms(prev => ({ ...prev, [activeDm]: [...(prev[activeDm] || []), newMsg].sort(sortMessages) }))
+    } else if (activeGroup) {
+        const result = await sendGroupMessage(activeGroup.id, msgPayload, tempId, replyId);
+        if (!result.success) {
+          setToast({ type: 'error', message: 'Failed to send to group' });
+        }
+      }
+
+    await saveMessage(chatId, newMsg)
+
+    setReplyText(''); setReplyingTo(null); setShowEmojiPicker(false);
+
+    try {
+      const pool = await getAuthenticatedPool(identity)
+      const { finalizeEvent } = await import('nostr-tools')
+      const { nip44 } = await import('nostr-tools')
+
+if (activeDm) {
+        const result = await sendDM(activeDm, msgPayload, tempId, replyId);
+        if (!result.success) {
+          setToast({ type: 'error', message: 'Failed to send: ' + (result.error || 'unknown') });
+        }
+      } else if (activeGroup) {
+        const tags = [['h', activeGroup.id], ['client', tempId]]
+        if (replyId) tags.push(['e', replyId, '', 'reply'])
+        const { finalizeEvent } = await import('nostr-tools');
+        const event = finalizeEvent({ kind: 9, created_at: Math.floor(Date.now() / 1000), tags, content: JSON.stringify(msgPayload) }, identity.sk);
+        const results = await Promise.allSettled(pool.publish(groupRelays, event));
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled') console.log(`[sendMessage] ${groupRelays[i]} OK:`, r.value);
+          else console.error(`[sendMessage] ${groupRelays[i]} REJECTED:`, r.reason);
+        });
+      }
+    } catch (err) { 
+      console.error("Full Encryption/Send Error:", err);
+      setToast({ type: 'error', message: "Failed to send: " + err.message }) 
+    }
+  }
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return
+    setIsSearching(true)
+    setSearchResults([])
+
+    let rawQuery = searchQuery.trim()
+
+    // --- LAYER 0: UNIQUE USERNAME LOOKUP (kind: 10003) ---
+    if (rawQuery.startsWith('@')) {
+      const usernameToFind = rawQuery.slice(1).toLowerCase();
+      if (usernameToFind.length < 3) {
+        setToast({ type: 'error', message: 'Username must be at least 3 characters' });
+        setIsSearching(false);
+        return;
+      }
+      
+      try {
+        const pool = await getAuthenticatedPool(identity);
+        const allSearchRelays = ['wss://relay.primal.net', 'wss://groups.aegispayhq.com'];
+        
+        // Query using #t filter (hashtag, universally supported)
+        // Fetch all recent 10003 events and filter locally (bulletproof)
+        const events = await queryWithTimeout(pool, allSearchRelays, { 
+          kinds: [10003], 
+          limit: 100
+        }, 4000);
+        
+        console.log('[Username Search] Fetched', events.length, 'total kind 10003 events');
+        
+        const matches = events.filter(ev => {
+          const usernameTag = ev.tags.find(t => t[0] === 'username')?.[1];
+          const tTag = ev.tags.find(t => t[0] === 't' && t[1] === 'cipher_username_' + usernameToFind);
+          return usernameTag === usernameToFind || tTag;
+        });
+        
+        if (matches.length > 0) {
+          const match = matches[0];
+          setSearchResults([{ 
+            type: 'user', 
+            pubkey: match.pubkey, 
+            name: '@' + usernameToFind, 
+            picture: null
+          }]);
+        } else {
+          setSearchResults([]);
+          setToast({ type: 'error', message: '@' + usernameToFind + ' not found. Ask them to re-save their profile.' });
+        }
+      } catch (err) {
+        console.error("Username search failed:", err);
+        setToast({ type: 'error', message: 'Search failed' });
+      } finally {
+        setIsSearching(false);
+      }
+      return;
+    }
+
+    // --- LAYER A: URL EXTRACTION (pasted invite links) ---
+    try {
+      if (rawQuery.startsWith('http')) {
+        const url = new URL(rawQuery)
+<<<
+
+----- src/Chat.jsx :: /39002/ -----
+>>> line 238
+      const evs = await queryWithTimeout(pool, groupRelays, { kinds: [39002], '#d': [id], '#h': [id] });
+      if (evs.length) {
+        const t = evs[0].tags.filter(x => x[0] === 'p');
+        const m = t.map(x => ({ pubkey: x[1], role: x[2] || 'member' }));
+        fetchProfilesForPubkeys(m.map(x => x.pubkey)); // Fetch profiles for members
+        if (!m.find(x => x.pubkey === identity.pk)) {
+          m.push({ pubkey: identity.pk, role: activeGroup?.creator === identity.pk ? 'admin' : 'member' });
+        }
+        setGroupMembers(m);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    if (showGroupInfo && activeGroup) {
+      fetchGroupMembers(activeGroup.id);
+    }
+  }, [showGroupInfo, activeGroup]);
+
+
+  // Send typing indicator in DMs
+  useEffect(() => {
+    if (!newMessage.trim() || view !== 'dm' || !activeDm || !identity.sk) return;
+    
+    const timer = setTimeout(async () => {
+      try {
+        const { finalizeEvent, nip44 } = await import('nostr-tools');
+        const pool = await getAuthenticatedPool(identity);
+        const shared = nip44.v2.utils.getConversationKey(identity.sk, activeDm);
+        const encrypted = nip44.v2.encrypt(JSON.stringify({ type: 'typing' }), shared);
+        
+        const ev = finalizeEvent({
+          kind: 4, // Use kind 4 so strict relays accept it
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [['p', activeDm]],
+          content: encrypted
+        }, identity.sk);
+        
+        pool.publish(generalRelays, ev);
+      } catch (e) {
+        // Silently fail typing indicators so we don't break the app
+      }
+    }, 200); // Wait 200ms to send (feels instant)
+    
+    return () => clearTimeout(timer);
+  }, [newMessage, view, activeDm, identity.sk]);
+
+
+
+  // Send typing indicator in Groups
+  useEffect(() => {
+    if (!newMessage.trim() || view !== 'group' || !activeGroup || !identity.sk) return;
+    
+    const timer = setTimeout(async () => {
+      try {
+        const { finalizeEvent } = await import('nostr-tools');
+        const pool = await getAuthenticatedPool(identity);
+        
+        const typingPayload = JSON.stringify({ type: 'typing' });
+        const ev = finalizeEvent({
+          kind: 9,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [['h', activeGroup.id]],
+          content: typingPayload
+        }, identity.sk);
+        
+        pool.publish(groupRelays, ev);
+      } catch (e) {}
+    }, 200);
+    
+    return () => clearTimeout(timer);
+  }, [newMessage, view, activeGroup, identity.sk]);
+
+  // Clean up typing users older than 2.5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      
+      setTypingUsers(prev => {
+<<<
+
+----- src/Chat.jsx :: /createGroup/ -----
+>>> line 1298
+  const createGroup = async (e) => {
+    if (e) e.preventDefault();
+    if (!newGroupName.trim()) return;
+    
+    // Capture the values BEFORE we clear the form
+    const gName = newGroupName;
+    const gAbout = newGroupAbout;
+    const gChannel = isChannel;
+    
+    setShowCreateGroup(false);
+    setShowMenu(false);
+    setNewGroupName(""); 
+    setNewGroupAbout(""); 
+    setIsChannel(false);
+
+    try {
+      const { finalizeEvent } = await import("nostr-tools");
+      const pool = await getAuthenticatedPool(identity);
+      const groupId = (globalThis.crypto?.randomUUID?.() || Date.now().toString()).replace(/-/g, "").slice(0, 16);
+      
+      console.log("[createGroup] groupId:", groupId);
+
+      const createEv = finalizeEvent({
+        kind: 9007, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId], ["name", gName], ["about", gAbout || ""], ["open"], ["p", identity.pk, "admin"]], // <-- Added ["public"]
+        content: "",
+      }, identity.sk);
+      
+      const r9007 = await Promise.allSettled(pool.publish(groupRelays, createEv));
+      let ok = 0;
+      r9007.forEach((r) => { if (r.status === "fulfilled") ok++; });
+      if (!ok) throw new Error("No relay accepted 9007");
+
+      const metaEv = finalizeEvent({
+        kind: 9002, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId], ["name", gName], ["about", gAbout || ""]],
+        content: "",
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(groupRelays, metaEv));
+
+      // Auto-join the group as the creator (kind 9021)
+      const joinEv = finalizeEvent({
+        kind: 9021, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId]], content: "Creator"
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(groupRelays, joinEv));
+
+      const newGroupObj = {
+        id: groupId, name: gName, about: gAbout || "",
+        isChannel: gChannel, creator: identity.pk, members: [identity.pk]
+      };
+
+      const localGroups = getMyGroups(identity.pk);
+      if (!localGroups.find(g => g.id === groupId)) {
+        localGroups.push(newGroupObj);
+        setMyGroups(identity.pk, localGroups);
+      }
+      setGroups((prev) => [newGroupObj, ...(prev || []).filter(c => c.id !== groupId)]);
+      setToast({ type: 'success', message: 'Group created!' });
+    } catch (err) { 
+      console.error("[createGroup] FAILED:", err); 
+      setToast({ type: 'error', message: 'Failed to create group' });
+    }
+  };
+
+  const ToastUI = () => toast && (
+    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-surfaceLight border border-white/10 px-5 py-3 rounded-2xl shadow-2xl animate-slide-up flex items-center gap-3">
+      <div className={`w-2 h-2 rounded-full ${toast.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`} />
+      <span className="text-sm font-semibold text-white">{toast.message}</span>
+    </div>
+  )
+
+  const Emojis = ['😀','😂','🥰','😎','😭','🤔','👍','🔥','❤️','🚀','💯','🙏','✨','💀','🤯','🤫','💩','🤝','👀','💸']
+
+
+  const deleteMessage = async (msgId) => {
+    if (!window.confirm("Delete this message?")) return;
+    try {
+      const { finalizeEvent } = await import('nostr-tools');
+      const pool = await getAuthenticatedPool(identity);
+      const ev = finalizeEvent({
+        kind: 5, created_at: Math.floor(Date.now() / 1000),
+        tags: [['e', msgId]], content: 'Deleted'
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(generalRelays, ev));
+      setDeletedMsgs(prev => new Set(prev).add(msgId));
+      setToast({ type: 'success', message: 'Message deleted' });
+    } catch (e) { 
+      console.error(e); 
+      setToast({ type: 'error', message: 'Failed to delete' });
+    }
+  };
+
+;
+
+
+  const markAsRead = async (chatId) => {
+    try {
+      await db.chatReads.put({ chatId, lastRead: Math.floor(Date.now() / 1000) });
+      setUnreadCounts(prev => ({ ...prev, [chatId]: 0 }));
+    } catch(e) {}
+  }
+
+  const openChat = (type, id, groupObj = null) => {
+    markAsRead(id);
+    setTypingUsers({});
+    setGroupTypingUsers({});
+    if (type === 'dm') { 
+      setActiveDm(id); 
+      setActiveGroup(null); // ✅ Clear group state
+      setView('dm'); 
+    }
+    else { 
+      setActiveGroup(groupObj); 
+      setActiveDm(null); // ✅ Clear DM state
+      setView('group'); 
+    }
+  }
+
+  if (loading) {
+    return (
+<<<
+>>> line 1318
+      console.log("[createGroup] groupId:", groupId);
+
+      const createEv = finalizeEvent({
+        kind: 9007, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId], ["name", gName], ["about", gAbout || ""], ["open"], ["p", identity.pk, "admin"]], // <-- Added ["public"]
+        content: "",
+      }, identity.sk);
+      
+      const r9007 = await Promise.allSettled(pool.publish(groupRelays, createEv));
+      let ok = 0;
+      r9007.forEach((r) => { if (r.status === "fulfilled") ok++; });
+      if (!ok) throw new Error("No relay accepted 9007");
+
+      const metaEv = finalizeEvent({
+        kind: 9002, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId], ["name", gName], ["about", gAbout || ""]],
+        content: "",
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(groupRelays, metaEv));
+
+      // Auto-join the group as the creator (kind 9021)
+      const joinEv = finalizeEvent({
+        kind: 9021, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId]], content: "Creator"
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(groupRelays, joinEv));
+
+      const newGroupObj = {
+        id: groupId, name: gName, about: gAbout || "",
+        isChannel: gChannel, creator: identity.pk, members: [identity.pk]
+      };
+
+      const localGroups = getMyGroups(identity.pk);
+      if (!localGroups.find(g => g.id === groupId)) {
+        localGroups.push(newGroupObj);
+        setMyGroups(identity.pk, localGroups);
+      }
+      setGroups((prev) => [newGroupObj, ...(prev || []).filter(c => c.id !== groupId)]);
+      setToast({ type: 'success', message: 'Group created!' });
+    } catch (err) { 
+      console.error("[createGroup] FAILED:", err); 
+      setToast({ type: 'error', message: 'Failed to create group' });
+    }
+  };
+
+  const ToastUI = () => toast && (
+    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-surfaceLight border border-white/10 px-5 py-3 rounded-2xl shadow-2xl animate-slide-up flex items-center gap-3">
+      <div className={`w-2 h-2 rounded-full ${toast.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`} />
+      <span className="text-sm font-semibold text-white">{toast.message}</span>
+    </div>
+  )
+
+  const Emojis = ['😀','😂','🥰','😎','😭','🤔','👍','🔥','❤️','🚀','💯','🙏','✨','💀','🤯','🤫','💩','🤝','👀','💸']
+
+
+  const deleteMessage = async (msgId) => {
+    if (!window.confirm("Delete this message?")) return;
+    try {
+      const { finalizeEvent } = await import('nostr-tools');
+      const pool = await getAuthenticatedPool(identity);
+      const ev = finalizeEvent({
+        kind: 5, created_at: Math.floor(Date.now() / 1000),
+        tags: [['e', msgId]], content: 'Deleted'
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(generalRelays, ev));
+      setDeletedMsgs(prev => new Set(prev).add(msgId));
+      setToast({ type: 'success', message: 'Message deleted' });
+    } catch (e) { 
+      console.error(e); 
+      setToast({ type: 'error', message: 'Failed to delete' });
+    }
+  };
+
+;
+
+
+  const markAsRead = async (chatId) => {
+    try {
+      await db.chatReads.put({ chatId, lastRead: Math.floor(Date.now() / 1000) });
+      setUnreadCounts(prev => ({ ...prev, [chatId]: 0 }));
+    } catch(e) {}
+  }
+
+  const openChat = (type, id, groupObj = null) => {
+    markAsRead(id);
+    setTypingUsers({});
+    setGroupTypingUsers({});
+    if (type === 'dm') { 
+      setActiveDm(id); 
+      setActiveGroup(null); // ✅ Clear group state
+      setView('dm'); 
+    }
+    else { 
+      setActiveGroup(groupObj); 
+      setActiveDm(null); // ✅ Clear DM state
+      setView('group'); 
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-4 h-full animate-fade-in">
+        <div className="flex justify-between items-center mb-6 px-2">
+          <div className="h-8 w-24 bg-surfaceLight rounded-lg animate-pulse" />
+          <div className="flex gap-2">
+            <div className="h-8 w-8 bg-surfaceLight rounded-full animate-pulse" />
+            <div className="h-8 w-8 bg-surfaceLight rounded-full animate-pulse" />
+          </div>
+        </div>
+        
+        <div className="space-y-3">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="bg-surface p-4 rounded-2xl border border-white/5 flex items-center gap-4">
+              {/* Avatar Skeleton */}
+              <div className="w-12 h-12 rounded-full bg-surfaceLight animate-pulse shrink-0" />
+              {/* Text Skeletons */}
+              <div className="flex-1 space-y-2">
+                <div className="h-4 bg-surfaceLight rounded animate-pulse w-1/3" />
+                <div className="h-3 bg-surfaceLight rounded animate-pulse w-1/2" />
+              </div>
+            </div>
+<<<
+>>> line 1358
+      console.error("[createGroup] FAILED:", err); 
+      setToast({ type: 'error', message: 'Failed to create group' });
+    }
+  };
+
+  const ToastUI = () => toast && (
+    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-surfaceLight border border-white/10 px-5 py-3 rounded-2xl shadow-2xl animate-slide-up flex items-center gap-3">
+      <div className={`w-2 h-2 rounded-full ${toast.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`} />
+      <span className="text-sm font-semibold text-white">{toast.message}</span>
+    </div>
+  )
+
+  const Emojis = ['😀','😂','🥰','😎','😭','🤔','👍','🔥','❤️','🚀','💯','🙏','✨','💀','🤯','🤫','💩','🤝','👀','💸']
+
+
+  const deleteMessage = async (msgId) => {
+    if (!window.confirm("Delete this message?")) return;
+    try {
+      const { finalizeEvent } = await import('nostr-tools');
+      const pool = await getAuthenticatedPool(identity);
+      const ev = finalizeEvent({
+        kind: 5, created_at: Math.floor(Date.now() / 1000),
+        tags: [['e', msgId]], content: 'Deleted'
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(generalRelays, ev));
+      setDeletedMsgs(prev => new Set(prev).add(msgId));
+      setToast({ type: 'success', message: 'Message deleted' });
+    } catch (e) { 
+      console.error(e); 
+      setToast({ type: 'error', message: 'Failed to delete' });
+    }
+  };
+
+;
+
+
+  const markAsRead = async (chatId) => {
+    try {
+      await db.chatReads.put({ chatId, lastRead: Math.floor(Date.now() / 1000) });
+      setUnreadCounts(prev => ({ ...prev, [chatId]: 0 }));
+    } catch(e) {}
+  }
+
+  const openChat = (type, id, groupObj = null) => {
+    markAsRead(id);
+    setTypingUsers({});
+    setGroupTypingUsers({});
+    if (type === 'dm') { 
+      setActiveDm(id); 
+      setActiveGroup(null); // ✅ Clear group state
+      setView('dm'); 
+    }
+    else { 
+      setActiveGroup(groupObj); 
+      setActiveDm(null); // ✅ Clear DM state
+      setView('group'); 
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-4 h-full animate-fade-in">
+        <div className="flex justify-between items-center mb-6 px-2">
+          <div className="h-8 w-24 bg-surfaceLight rounded-lg animate-pulse" />
+          <div className="flex gap-2">
+            <div className="h-8 w-8 bg-surfaceLight rounded-full animate-pulse" />
+            <div className="h-8 w-8 bg-surfaceLight rounded-full animate-pulse" />
+          </div>
+        </div>
+        
+        <div className="space-y-3">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="bg-surface p-4 rounded-2xl border border-white/5 flex items-center gap-4">
+              {/* Avatar Skeleton */}
+              <div className="w-12 h-12 rounded-full bg-surfaceLight animate-pulse shrink-0" />
+              {/* Text Skeletons */}
+              <div className="flex-1 space-y-2">
+                <div className="h-4 bg-surfaceLight rounded animate-pulse w-1/3" />
+                <div className="h-3 bg-surfaceLight rounded animate-pulse w-1/2" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // --- CHAT LIST VIEW ---
+  if (view === 'list') {
+    return (
+      <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} transition={{ duration: 0.2 }} className="flex-1 overflow-y-auto min-h-0 p-4 pb-24 relative">
+        <ToastUI />
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center gap-3"><img src="/logo-full.png" alt="Cipher" className="h-7 w-auto object-contain mix-blend-screen" />{isVendor && (
+            <button onClick={() => setView('shop')} className="bg-white text-black hover:bg-gray-200 text-xs font-bold px-3 py-1.5 rounded-full transition-colors">Shop</button>
+          )}</div>
+          <div className="flex gap-2">
+            
+          <button onClick={fetchChats} className="p-2 text-white/50 hover:text-white"><RefreshCw size={20}/></button>
+            <button onClick={() => setView('search')} className="p-2 text-white/50 hover:text-white"><Search size={20}/></button>
+          </div>
+        </div>
+
+        <ChatList onOpenChat={openChat} />
+
+              <CreateGroupModal createGroup={createGroup} />
+
+        <FloatingMenu /><MyProfileModal identity={identity} />
+
+      </motion.div>
+    )
+  }
+
+
+  // --- SHOP VIEW ---
+
+
+  const handleConfirmOrder = (order) => {
+          setCheckoutProduct(null);
+          const targetDm = order.vendorPubkey || identity.pk;
+          
+<<<
+
+----- src/Chat.jsx :: /9001|removeUser|kickMember|banMember|removeMember/ -----
+>>> line 1820
+                                const ev = finalizeEvent({ kind: 9001, created_at: Math.floor(Date.now() / 1000), tags: [['h', activeGroup.id], ['p', member.pubkey]], content: '' }, identity.sk);
+                                await Promise.allSettled(pool.publish(groupRelays, ev));
+                                setGroupMembers(prev => prev.filter(x => x.pubkey !== member.pubkey));
+                                setToast({ type: 'success', message: 'Member kicked' });
+                              }}
+                              className="text-[10px] bg-red-500/20 hover:bg-red-500/30 text-red-400 px-2 py-1 rounded"
+                            >
+                              Kick
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div
+                  onClick={async () => {
+                    setShowGroupInfo(false);
+                    if (typeof leaveGroup === 'function') await leaveGroup(activeGroup.id);
+                  }}
+                  className="flex items-center justify-between p-3 bg-red-500/10 rounded-xl border border-red-500/20 cursor-pointer mt-6"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-red-400">Leave Group</p>
+                    <p className="text-xs text-red-400/50">Remove yourself from this group</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+            {profilePubkey && (
+        <ProfileModal 
+          pubkey={profilePubkey} 
+          profile={profiles[profilePubkey]} 
+          identity={identity}
+          onClose={() => setProfilePubkey(null)} 
+          onMessage={(pk) => { openChat('dm', pk); setProfilePubkey(null); }}
+          onReview={(pk) => { setReviewTarget(pk); }}
+        />
+      )}
+
+      
+
+      {forwardingMsg && (
+        <ForwardModal 
+          isOpen={!!forwardingMsg} 
+          onClose={() => setForwardingMsg(null)} 
+          onForward={handleForwardSubmit} 
+        />
+      )}
+
+      {showFullEmoji && selectedMessage && (
+        <FullEmojiPicker
+          onSelect={(emoji) => {
+            const msgId = selectedMessage.id;
+            const authorPk = selectedMessage.pubkey;
+            setShowFullEmoji(false);
+            setSelectedMessage(null);
+            if (msgId) {
+              sendReaction(msgId, emoji, !!activeGroup, activeGroup?.id, authorPk);
+            }
+          }}
+          onClose={() => {
+            setShowFullEmoji(false);
+            setSelectedMessage(null);
+          }}
+        />
+      )}
+
+      {reviewTarget && (
+        <ReviewModal
+          targetName={profiles[reviewTarget]?.displayName || profiles[reviewTarget]?.name || `User ${reviewTarget.slice(0, 4)}`}
+          onSubmit={async (rating, text) => {
+            const res = await sendReview(reviewTarget, rating, text);
+            if (res.success) {
+              setToast({ type: 'success', message: 'Review published!' });
+              return true;
+            } else {
+              setToast({ type: 'error', message: res.error || 'Failed to publish' });
+              return false;
+            }
+          }}
+          onClose={() => setReviewTarget(null)}
+        />
+      )}
+      
+        
+        <MessageActionsSheet
+            isOpen={!!selectedMessage}
+            onClose={() => setSelectedMessage(null)}
+            onAction={handleMessageAction}
+            msg={selectedMessage}
+            isAdmin={!!activeGroup && activeGroup.creator === identity.pk}
+            isMine={selectedMessage?.pubkey === identity.pk}
+            canEdit={selectedMessage?.pubkey === identity.pk && selectedMessage?.data?.type === 'text'}
+          />
+      </motion.div>
+    );
+  }
+
+  return null;
+}
+
+function MessageIcon({ size }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+}
+<<<
+
+----- src/Chat.jsx :: /MessageBubble|forwardedFrom/ -----
+>>> line 14
+import MessageBubble from './components/MessageBubble'
+import ProfileModal from './components/ProfileModal'
+import MessageInput from './components/MessageInput'
+import { generalRelays, groupRelays, queryWithTimeout } from './lib/relays';
+import { getAuthenticatedPool } from './lib/pool';
+import { useChatStore } from './store/chatStore';
+import { useNIP44DM } from './hooks/useNIP44DM';
+import { useNIP29Group } from './hooks/useNIP29Group';
+import { useReactions } from './hooks/useReactions';
+import { useReputation } from './hooks/useReputation';
+import { stripImageMetadata } from './lib/media';
+import ChatHeader from './components/chat/ChatHeader';
+import ChatList from './components/chat/ChatList';
+import CreateGroupModal from './components/chat/CreateGroupModal';
+import FloatingMenu from './components/chat/FloatingMenu';
+import MyProfileModal from './components/chat/MyProfileModal';
+import SearchView from './components/chat/SearchView';
+import ChatPinnedBar from './components/chat/ChatPinnedBar';
+import ChatReplyPreview from './components/chat/ChatReplyPreview';
+import ReviewModal from './components/chat/ReviewModal';
+import FullEmojiPicker from './components/chat/FullEmojiPicker';
+import ForwardModal from './components/chat/ForwardModal';
+import MessageActionsSheet from './components/chat/MessageActionsSheet';
+
+function renderMessage(text) {
+  if (!text) return null;
+  const parts = text.split(/(\|\|.*?\|\|)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('||') && part.endsWith('||')) {
+      return <span key={i} onClick={(e) => { e.currentTarget.classList.remove('blur-sm', 'text-transparent'); e.currentTarget.classList.add('text-white'); }} className="bg-surfaceLight px-1 rounded cursor-pointer blur-sm text-transparent transition-all select-none">{part.slice(2, -2)}</span>
+    }
+<<<
+>>> line 1576
+              <MessageBubble
+                identity={identity}
+                key={msg.id}
+                msg={msg}
+                data={msgData}
+                showTail={showTail}
+                repliedTo={repliedMsg}
+                repliedData={repliedMsg?.data}
+                reactions={reactions[msg.id]}
+                onReact={(emoji) => sendReaction(msg.id, emoji, false, null, msg.pubkey)}
+                onSelect={(m, d, action) => {
+                  console.log('[Bubble Click]', { action, msgId: msg.id });
+                  if (action === 'close') setSelectedMessage(null);
+                  else if (action === 'open_picker') { setShowFullEmoji(true); setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: msgData.message || msgData.url }); }
+                  else setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: msgData.message || msgData.url });
+                }}
+                isSelected={selectedMessage?.id === msg.id}
+                isGroup={false}
+                myPubkey={identity.pk}
+                onAction={handleMessageAction}
+              />
+            )
+          })}
+          
+          
+          <div className="h-4" />
+        
+          
+          </div>
+
+        <ChatReplyPreview />
+<<<
+>>> line 1714
+              <MessageBubble
+                key={msg.id}
+                msg={msg}
+                data={parsed}
+                reactions={reactions[msg.id]}
+                onReact={(emoji) => {
+                  console.log("🚨 ONREACT FIRED:", emoji, msg.id);
+                  sendReaction(msg.id, emoji, !!activeGroup, activeGroup?.id, msg.pubkey);
+                }}
+                onAction={handleMessageAction}
+                myPubkey={identity.pk}
+                showTail={showTail}
+                repliedTo={repliedMsg}
+                repliedData={repliedParsed}
+                onSelect={(m, d, action) => {
+                  console.log('[Bubble Click]', { action, msgId: msg.id });
+                  if (action === 'close') setSelectedMessage(null);
+                  else if (action === 'open_picker') { setShowFullEmoji(true); setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: parsed.message || parsed.url }); }
+                  else setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: parsed.message || parsed.url });
+                }}
+                isSelected={selectedMessage?.id === msg.id}
+                isGroup={true}
+                onSenderClick={(pk) => setProfilePubkey(pk)}
+                senderName={profiles[msg.pubkey]?.displayName || profiles[msg.pubkey]?.name || `User ${msg.pubkey.slice(0, 4)}`}
+              />
+            )
+          })}
+          
+          
+          <div className="h-4" />
+        </div>
+<<<
+
+########## 9. package.json ##########
+{
+  "name": "cipher",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@lglab/react-qr-code": "^1.8.1",
+    "@nostr-dev-kit/ndk": "^3.0.3",
+    "@nostr-wot/blossom": "^1.0.1",
+    "@scure/bip39": "^2.4.0",
+    "dexie": "^4.4.6",
+    "emoji-picker-react": "^5.1.0",
+    "framer-motion": "^14.4.0",
+    "lucide-react": "^1.60.0",
+    "nostr-passkey": "^0.4.0",
+    "nostr-tools": "^2.25.2",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "autoprefixer": "^10.6.1",
+    "oxlint": "^1.88.0",
+    "postcss": "^8.5.31",
+    "tailwindcss": "^3.4.19",
+    "vite": "^8.3.4"
+  }
+}
+
+### AUDIT END ###

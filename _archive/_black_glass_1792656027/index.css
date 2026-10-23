@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Light Mode (Default) */
+:root {
+  --bg-base: #ffffff;
+  --bg-surface: #f3f4f6;
+  --bg-surface-light: #e5e7eb;
+  --border-dark: #d1d5db;
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+}
+
+/* Dark Mode (Triggered by .dark on <html>) */
+.dark {
+  --bg-base: #000000;
+  --bg-surface: #0a0a0a;
+  --bg-surface-light: #171717;
+  --border-dark: #262626;
+  --text-primary: #ffffff;
+  --text-secondary: #9ca3af;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+}

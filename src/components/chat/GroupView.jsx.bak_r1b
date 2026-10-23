@@ -1,0 +1,217 @@
+import { useVouchCount } from '../../hooks/useVouchCount';
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import MessageBubble from '../MessageBubble';
+import ChatHeader from './ChatHeader';
+import ChatPinnedBar from './ChatPinnedBar';
+import ChatReplyPreview from './ChatReplyPreview';
+import MessageInput from '../MessageInput';
+import MessageActionsSheet from './MessageActionsSheet';
+import GroupInfoSidebar from './GroupInfoSidebar';
+import ProfileModal from '../ProfileModal';
+import ForwardModal from './ForwardModal';
+import FullEmojiPicker from './FullEmojiPicker';
+import ReviewModal from './ReviewModal';
+import ReactionPicker from './ReactionPicker';
+import ReactionsDetail from './ReactionsDetail';
+import MessageEditHistory from './MessageEditHistory';
+import ImageLightbox from '../ImageLightbox';
+import DateSeparator from './DateSeparator';
+import PostListingModal from './PostListingModal';
+import { useChatStore } from '../../store/chatStore';
+
+export default function GroupView({ 
+  identity, isScammer, activeGroup, groupMessages, profiles, deletedMsgs, reactions, selectedMessage,
+  forwardingMsg, showFullEmoji, reviewTarget, scrollRef, sendReaction, handleMessageAction,
+  setSelectedMessage, setShowFullEmoji, setForwardingMsg, setReviewTarget, handleForwardSubmit,
+  sendMessage, setNewMessage, newMessage, canPost, handleImageUpload, startRecording, stopRecording,
+  isRecording, uploadingImage, setProfilePubkey, profilePubkey, sendReview, setToast, openChat,
+  unpinMessage, groupMembers, addMember, kickMember, promoteMember, leaveGroup, showGroupInfo, setShowGroupInfo, openPostListing, updateGroupSettings
+}) {
+  const groupMsgs = groupMessages[activeGroup.id] || [];
+  useEffect(() => {
+    if (activeGroup?.id) {
+      const draft = localStorage.getItem(`draft-group-${activeGroup.id}`) || '';
+      setNewMessage(draft);
+    }
+  }, [activeGroup?.id, setNewMessage]);
+  const [lightboxUrl, setLightboxUrl] = useState(null);
+  const [showListingModal, setShowListingModal] = useState(false);
+  const [emojiTarget, setEmojiTarget] = useState(null);
+  const [reactionsDetail, setReactionsDetail] = useState(null);
+  const selectionMode = useChatStore(s => s.selectionMode);
+  const selectedMsgs = useChatStore(s => s.selectedMsgs);
+  const toggleSelectedMsg = useChatStore(s => s.toggleSelectedMsg);
+  const [editingHistoryMsg, setEditingHistoryMsg] = useState(null);
+
+  
+  // Batch-fetch vouch counts for all product posters in this view
+  const [_vouchTick, _setVouchTick] = useState(0);
+  const _vendorSet = new Set();
+  groupMsgs.forEach(m => {
+    try {
+      const p = JSON.parse(m.rawContent || '{}');
+      if (p.type === 'product') _vendorSet.add(m.pubkey);
+    } catch(e) {}
+  });
+  const _vendorList = Array.from(_vendorSet);
+  // We fetch vouch counts via a promise pool (max 3 concurrent)
+  const [_vouchMap, _setVouchMap] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { getAuthenticatedPool } = await import('../../lib/pool');
+      const { generalRelays, queryWithTimeout } = await import('../../lib/relays');
+      const pool = await getAuthenticatedPool(identity);
+      const newMap = {};
+      await Promise.all(_vendorList.map(async (pk) => {
+        try {
+          const events = await queryWithTimeout(pool, generalRelays, { kinds: [10004], '#p': [pk], limit: 200 }, 3000);
+          const unique = new Set(events.filter(e => e.pubkey !== pk).map(e => e.pubkey));
+          newMap[pk] = unique.size;
+        } catch(e) { newMap[pk] = 0; }
+      }));
+      if (!cancelled) _setVouchMap(newMap);
+    })();
+    return () => { cancelled = true; };
+  }, [_vendorList.join(','), identity?.pk]);
+
+const handleReplyClick = (msgId) => {
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  return (
+    <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 20, opacity: 0 }} transition={{ duration: 0.2 }} className="absolute inset-0 z-50 flex flex-col bg-[#0a0a0a] pb-[72px]">
+      <ChatHeader mode="group" />
+      <ChatPinnedBar unpinMessage={unpinMessage} />
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 p-4 space-y-4">
+        {groupMsgs.length === 0 && (
+          <div className="text-center text-white/30 mt-10 text-sm">No messages yet. Say hi!</div>
+        )}
+        {groupMsgs.map((msg, i) => {
+          if (deletedMsgs.has(msg.id)) return null;
+          const prevMsg = i > 0 ? groupMsgs[i-1] : null;
+          const showDate = !prevMsg || new Date(msg.timestamp * 1000).toDateString() !== new Date(prevMsg.timestamp * 1000).toDateString();
+          const showTail = i === 0 || groupMsgs[i-1].isSender !== msg.isSender;
+          const repliedMsg = msg.replyTo ? groupMsgs.find(m => m.id === msg.replyTo) : null;
+          let parsed = {};
+          try { parsed = JSON.parse(msg.rawContent || '{}'); } catch (e) { parsed = { type: 'text', message: msg.rawContent || '' }; }
+          let repliedParsed = {};
+          try { repliedParsed = JSON.parse(repliedMsg?.rawContent || '{}'); } catch (e) {}
+          
+          return (
+            <React.Fragment key={msg.id}>
+              {showDate && <DateSeparator timestamp={msg.timestamp} />}
+              <MessageBubble
+                msg={msg} data={{ ...parsed, vouchCount: _vouchMap[msg.pubkey] || 0 }} isScammer={isScammer} reactions={reactions[msg.id]}
+                onReact={(emoji) => sendReaction(msg.id, emoji, true, activeGroup.id, msg.pubkey)}
+                onAction={handleMessageAction} myPubkey={identity.pk} showTail={showTail}
+                repliedTo={repliedMsg} repliedData={repliedParsed}
+                onSelect={(m, d, action) => {
+                  if (action === 'close') setSelectedMessage(null);
+                  else if (action === 'open_picker') { setShowFullEmoji(true); setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: parsed.message || parsed.url }); }
+                  else setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: parsed.message || parsed.url });
+                }}
+                onReplyAction={() => setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: parsed.message || parsed.url })}
+                onImageClick={setLightboxUrl}
+                onReplyClick={handleReplyClick}
+                onShowReactions={() => setReactionsDetail(reactions[msg.id])}
+                onShowEdits={(m) => setEditingHistoryMsg(m)}
+                selectionMode={selectionMode}
+                isSelectedMsg={selectedMsgs.includes(msg.id)}
+                onToggleSelect={(id) => toggleSelectedMsg(id)}
+                isSelected={selectedMessage?.id === msg.id} isGroup={true}
+                onSenderClick={(pk) => setProfilePubkey(pk)}
+                senderName={profiles[msg.pubkey]?.displayName || profiles[msg.pubkey]?.name || `User ${(msg.pubkey || "anon").slice(0, 4)}`}
+              />
+            </React.Fragment>
+          );
+        })}
+        <div className="h-4" />
+      </div>
+
+      <ChatReplyPreview />
+      <MessageInput
+        value={newMessage} onChange={(val) => {
+          setNewMessage(val);
+          if (val.trim() && activeGroup?.id) localStorage.setItem(`draft-group-${activeGroup.id}`, val);
+          else if (activeGroup?.id) localStorage.removeItem(`draft-group-${activeGroup.id}`);
+        }} onSend={() => { if (newMessage.trim()) { sendMessage(newMessage); setNewMessage(''); } }}
+        canPost={canPost} isChannel={activeGroup.isChannel} onImageUpload={handleImageUpload} startRecording={startRecording} stopRecording={stopRecording}
+        isRecording={isRecording} uploadingImage={uploadingImage}
+        onPostListing={() => setShowListingModal(true)}
+      />
+
+      <GroupInfoSidebar 
+        showGroupInfo={showGroupInfo} setShowGroupInfo={setShowGroupInfo} 
+        activeGroup={activeGroup} identity={identity} 
+        groupMembers={groupMembers} profiles={profiles} 
+        addMember={addMember} kickMember={kickMember} promoteMember={promoteMember} 
+        leaveGroup={leaveGroup} setProfilePubkey={setProfilePubkey} 
+        setToast={setToast} 
+        updateGroupSettings={updateGroupSettings}
+      />
+
+      {profilePubkey && (
+        <ProfileModal pubkey={profilePubkey} profile={profiles[profilePubkey]} identity={identity}
+          onClose={() => setProfilePubkey(null)} onMessage={(pk) => { openChat('dm', pk); setProfilePubkey(null); }} onReview={(pk) => setReviewTarget(pk)} onViewStorefront={(pk) => onViewStorefront && onViewStorefront(pk)} />
+      )}
+
+      <MessageActionsSheet 
+        isOpen={!!selectedMessage} 
+        onClose={() => setSelectedMessage(null)} 
+        onAction={(action, emoji) => {
+          if (action === 'open_picker') {
+            setEmojiTarget(selectedMessage);
+            setSelectedMessage(null);
+            return;
+          }
+          handleMessageAction(action, emoji);
+        }} 
+        msg={selectedMessage} 
+        isAdmin={activeGroup.creator === identity.pk} 
+        isMine={selectedMessage?.pubkey === identity.pk} 
+        canEdit={selectedMessage?.pubkey === identity.pk && selectedMessage?.data?.type === 'text'} 
+      />
+
+      {emojiTarget && (
+        <ReactionPicker
+          onSelect={(emoji) => {
+            sendReaction(emojiTarget.id, emoji, true, activeGroup.id, emojiTarget.pubkey);
+            setEmojiTarget(null);
+          }}
+          onClose={() => setEmojiTarget(null)}
+        />
+      )}
+
+      <ReactionsDetail isOpen={!!reactionsDetail} onClose={() => setReactionsDetail(null)} reactions={reactionsDetail} profiles={profiles} />
+
+      <MessageEditHistory isOpen={!!editingHistoryMsg} onClose={() => setEditingHistoryMsg(null)} msg={editingHistoryMsg} />
+
+      {forwardingMsg && <ForwardModal isOpen={!!forwardingMsg} onClose={() => setForwardingMsg(null)} onForward={handleForwardSubmit} />}
+      
+      {showFullEmoji && selectedMessage && (
+        <FullEmojiPicker onSelect={(emoji) => { const id = selectedMessage.id; const pk = selectedMessage.pubkey; setShowFullEmoji(false); setSelectedMessage(null); if (id) sendReaction(id, emoji, true, activeGroup.id, pk); }} onClose={() => { setShowFullEmoji(false); setSelectedMessage(null); }} />
+      )}
+
+      {reviewTarget && (
+        <ReviewModal targetName={profiles[reviewTarget]?.displayName || profiles[reviewTarget]?.name || `User ${reviewTarget.slice(0, 4)}`}
+          onSubmit={async (rating, text) => { const res = await sendReview(reviewTarget, rating, text); if (res.success) { setToast({ type: 'success', message: 'Review published!' }); return true; } else { setToast({ type: 'error', message: res.error || 'Failed to publish' }); return false; } }}
+          onClose={() => setReviewTarget(null)} />
+      )}
+
+      <PostListingModal 
+        isOpen={showListingModal} 
+        onClose={() => setShowListingModal(false)} 
+        onSubmit={async (data) => {
+          const payload = { type: 'product', title: data.title, priceUsd: data.priceUsd, image: data.image, description: data.description };
+          await sendMessage('', false, null, null, payload);
+        }} 
+      />
+      <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />
+      
+    </motion.div>
+  );
+}

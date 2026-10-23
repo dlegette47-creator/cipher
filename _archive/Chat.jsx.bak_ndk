@@ -1,0 +1,1511 @@
+import { useState, useEffect, useRef } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { 
+  Package, MapPin, ArrowLeft, Send, Plus, Users, Search, Lock, X, Megaphone, 
+  CheckCheck, Share2, RefreshCw, Image as ImageIcon, Trash2, Smile, 
+  Reply, Forward, Mic, Square, Play, Pin, Check
+} from 'lucide-react'
+import { uploadToBlossom } from '@nostr-wot/blossom'
+import { useProfiles } from './useProfiles'
+import { db, saveMessage } from './db'
+import { getNDK } from './ndk'
+
+function renderMessage(text) {
+  if (!text) return null;
+  const parts = text.split(/(\|\|.*?\|\|)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('||') && part.endsWith('||')) {
+      return <span key={i} onClick={(e) => { e.currentTarget.classList.remove('blur-sm', 'text-transparent'); e.currentTarget.classList.add('text-white'); }} className="bg-surfaceLight px-1 rounded cursor-pointer blur-sm text-transparent transition-all select-none">{part.slice(2, -2)}</span>
+    }
+    const boldParts = part.split(/(\*\*.*?\*\*)/g);
+    return boldParts.map((bp, j) => {
+      if (bp.startsWith('**') && bp.endsWith('**')) return <strong key={`${i}-${j}`}>{bp.slice(2, -2)}</strong>
+      return bp
+    })
+  })
+}
+
+
+// ✅ GLOBAL POOL: Lives outside React so StrictMode doesn't kill it
+// Revised Global Pool Logic
+let pools = {};
+
+const getAuthenticatedPool = async (identity) => {
+  if (pools[identity.pk]) return pools[identity.pk];
+
+  const { SimplePool, finalizeEvent } = await import('nostr-tools');
+  const pool = new SimplePool({
+    enablePing: false, // Stop the forced-ping loop
+    enableReconnect: true,
+    onauth: async (challenge) => {
+      console.log("🔒 AUTH challenge received:", challenge);
+      const authEvent = finalizeEvent({
+        kind: 22242,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ['relay', 'wss://groups.aegispayhq.com'],
+          ['challenge', challenge]
+        ],
+        content: ''
+      }, identity.sk);
+      return authEvent;
+    }
+  });
+
+  const originalEnsure = pool.ensureRelay.bind(pool);
+  pool.ensureRelay = async (url) => {
+    const relay = await originalEnsure(url);
+    if (url.includes('aegispayhq.com') && !relay.__patchedAuth) {
+      relay.__patchedAuth = true;
+      const originalSend = relay.send.bind(relay);
+      relay.send = (msg) => {
+        try {
+          const parsed = JSON.parse(msg);
+          // ✅ FIX: Stringify the AUTH event object for this specific relay
+          if (parsed[0] === 'AUTH' && typeof parsed[1] === 'object') {
+            console.log("🛠️ Monkey-patching AUTH event to string...");
+            msg = JSON.stringify(['AUTH', JSON.stringify(parsed[1])]);
+          }
+        } catch (e) {}
+        originalSend(msg);
+      };
+    }
+    return relay;
+  };
+
+  pools[identity.pk] = pool;
+  return pool;
+};
+
+export default function Chat({ identity }) {
+  const [view, setView] = useState('list') 
+  const [activeDm, setActiveDm] = useState(null)
+  const [activeGroup, setActiveGroup] = useState(null)
+  
+  const [dms, setDms] = useState({})
+  const [groups, setGroups] = useState([])
+  const [groupMessages, setGroupMessages] = useState({})
+  const [reactions, setReactions] = useState({}) 
+  const [deletedMsgs, setDeletedMsgs] = useState(new Set())
+  
+  const [replyText, setReplyText] = useState('')
+  const [replyingTo, setReplyingTo] = useState(null)
+  const [forwardingMsg, setForwardingMsg] = useState(null)
+  const [showForwardModal, setShowForwardModal] = useState(false)
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+
+  const [loading, setLoading] = useState(true)
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  
+  const [showMenu, setShowMenu] = useState(false)
+  const [showCreateGroup, setShowCreateGroup] = useState(false)
+  const [selectedMessage, setSelectedMessage] = useState(null) 
+  
+  const [newGroupName, setNewGroupName] = useState('')
+  const [newGroupAbout, setNewGroupAbout] = useState('')
+  const [isChannel, setIsChannel] = useState(false) 
+
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState([])
+  const [isSearching, setIsSearching] = useState(false)
+  const [toast, setToast] = useState(null)
+  const [unreadCounts, setUnreadCounts] = useState({})
+
+  const scrollRef = useRef(null)
+  const poolRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const mediaRecorderRef = useRef(null)
+  const audioChunksRef = useRef([])
+
+  // ✅ FIX: Call useProfiles ONCE at the top level for all needed pubkeys
+  const neededPubkeys = [...Object.keys(dms)];
+  if (activeDm && !neededPubkeys.includes(activeDm)) neededPubkeys.push(activeDm);
+  const profiles = useProfiles(neededPubkeys);
+
+  
+
+
+  
+  const groupRelays = ['wss://groups.aegispayhq.com'];
+  const generalRelays = ['wss://nos.lol', 'wss://relay.primal.net']
+  const searchRelays = ['wss://relay.vertexlab.io',  'wss://relay.noswhere.com', 'wss://relay.primal.net']
+
+  const queryWithTimeout = (pool, relays, filter, timeoutMs = 4000) => {
+    return Promise.race([
+      pool.querySync(relays, filter).catch(err => []), 
+      new Promise(resolve => setTimeout(() => resolve([]), timeoutMs))
+    ]);
+  };
+
+  useEffect(() => {
+    if (!identity?.sk) return;
+    fetchGroups().catch((e) => console.error('[init] fetchGroups:', e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity?.sk]);
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [toast])
+
+  const sortMessages = (a, b) => {
+    // Prefer local millisecond timestamp, fallback to relay seconds
+    const timeA = a.local_timestamp || (a.timestamp * 1000);
+    const timeB = b.local_timestamp || (b.timestamp * 1000);
+    if (timeA !== timeB) return timeA - timeB;
+    return (a.id || '').localeCompare(b.id || '');
+  };
+
+  const fetchChats = async (showLoader = false) => {
+    if (showLoader) setLoading(true);
+    try {
+      const pool = await getAuthenticatedPool(identity)
+      
+      // Use Promise.all to fetch everything in parallel so it's faster
+      const [sentDms, recvDms, groupMetaEvents, allMsgs, reactionsEvents, delEvents] = await Promise.all([
+        queryWithTimeout(pool, generalRelays, { kinds: [4], authors: [identity.pk], limit: 50 }),
+        queryWithTimeout(pool, generalRelays, { kinds: [4], '#p': [identity.pk], limit: 50 }),
+        queryWithTimeout(pool, generalRelays, { kinds: [41], limit: 100 }),
+        queryWithTimeout(pool, generalRelays, { kinds: [42], limit: 200 }),
+        queryWithTimeout(pool, generalRelays, { kinds: [7], limit: 500 }),
+        queryWithTimeout(pool, generalRelays, { kinds: [5], limit: 100 })
+      ]);
+
+      const allDms = Array.from(new Map([...sentDms, ...recvDms].map(ev => [ev.id, ev])).values())
+      
+      const { nip44 } = await import('nostr-tools')
+      for (const ev of allDms) {
+        try {
+          const isSender = ev.pubkey === identity.pk
+          const counterparty = isSender ? ev.tags.find(t => t[0] === 'p')?.[1] : ev.pubkey
+          if (!counterparty) continue
+          
+          const shared = nip44.v2.utils.getConversationKey(identity.sk, counterparty)
+          const text = nip44.v2.decrypt(ev.content, shared)
+          let data = {}; try { data = JSON.parse(text) } catch (e) { data = { type: 'text', message: text } }
+          
+          // ✅ FIX: Ignore system events so they don't pollute the chat list
+          if (data.type === 'typing' || data.type === 'read' || data.type === 'pin') continue;
+
+          const replyTag = ev.tags.find(t => t[0] === 'e' && t[3] === 'reply')
+          const clientId = ev.tags.find(t => t[0] === 'client')?.[1]
+
+          await saveMessage(counterparty, {
+            id: ev.id, clientId, isSender, timestamp: ev.created_at, data, pubkey: ev.pubkey, replyTo: replyTag ? replyTag[1] : null,
+            isGroup: false // ✅ Explicitly mark as DM
+          });
+        } catch (e) {}
+      }
+
+      const uniqueGroups = Array.from(new Map(groupMetaEvents.map(ev => {
+        const dTag = ev.tags.find(t => t[0] === 'd')?.[1]
+        return [dTag, ev]
+      })).values())
+      
+      const parsedGroups = uniqueGroups.map(ev => {
+        let meta = {}; try { meta = JSON.parse(ev.content) } catch (e) {}
+        return {
+          id: ev.tags.find(t => t[0] === 'd')?.[1],
+          name: meta.name || 'Unnamed',
+          about: meta.about || '',
+          isChannel: meta.isChannel || false,
+          creator: ev.pubkey
+        }
+      }).filter(g => g.id)
+      const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+      const allGroups = [...localGroups];
+      parsedGroups.forEach(pg => {
+        if (!allGroups.find(g => g.id === pg.id)) {
+          allGroups.push(pg);
+        }
+      });
+      setGroups(allGroups);
+
+      for (const ev of allMsgs) {
+        const groupId = ev.tags.find(t => t[0] === 'e')?.[1]
+        if (!groupId) continue
+        const replyTag = ev.tags.find(t => t[0] === 'e' && t[3] === 'reply')
+        const clientId = ev.tags.find(t => t[0] === 'client')?.[1]
+        
+        await saveMessage(groupId, {
+          id: ev.id, clientId, isSender: ev.pubkey === identity.pk, pubkey: ev.pubkey, timestamp: ev.created_at, rawContent: ev.content, replyTo: replyTag ? replyTag[1] : null,
+          isGroup: true // ✅ Explicitly mark as Group
+        });
+      }
+
+      const reactionMap = {}
+      reactionsEvents.forEach(ev => {
+        const targetId = ev.tags.find(t => t[0] === 'e')?.[1]
+        if (targetId) {
+          if (!reactionMap[targetId]) reactionMap[targetId] = []
+          if (!reactionMap[targetId].find(r => r.pubkey === ev.pubkey && r.emoji === ev.content)) {
+            reactionMap[targetId].push({ emoji: ev.content, pubkey: ev.pubkey })
+          }
+        }
+      })
+      setReactions(reactionMap)
+
+      const deleted = new Set()
+      delEvents.forEach(ev => {
+        if (ev.pubkey === identity.pk) {
+          const targetId = ev.tags.find(t => t[0] === 'e')?.[1]
+          if (targetId) deleted.add(targetId)
+        }
+      })
+      setDeletedMsgs(deleted)
+
+      // Load from Dexie
+      const allDbMsgs = await db.messages.toArray()
+      
+      // Calculate unread counts
+      const reads = await db.chatReads.toArray();
+      const readMap = {};
+      reads.forEach(r => readMap[r.chatId] = r.lastRead);
+      
+      const counts = {};
+      allDbMsgs.forEach(msg => {
+        if (!msg.isSender) {
+          const lastRead = readMap[msg.chatId] || 0;
+          if (msg.timestamp > lastRead) {
+            counts[msg.chatId] = (counts[msg.chatId] || 0) + 1;
+          }
+        }
+      });
+      setUnreadCounts(counts);
+
+      const finalDms = {}
+      const finalGroups = {}
+      
+      for (const msg of allDbMsgs) {
+        if (msg.isGroup === true) {
+          if (!finalGroups[msg.chatId]) finalGroups[msg.chatId] = []
+          finalGroups[msg.chatId].push(msg)
+        } else {
+          if (!finalDms[msg.chatId]) finalDms[msg.chatId] = []
+          finalDms[msg.chatId].push(msg)
+        }
+      }
+
+      Object.keys(finalDms).forEach(k => finalDms[k].sort(sortMessages))
+      Object.keys(finalGroups).forEach(k => finalGroups[k].sort(sortMessages))
+
+      setDms(finalDms)
+      setGroupMessages(finalGroups)
+
+    } catch (err) { 
+      console.error("Fetch error:", err) 
+    } finally { 
+      setLoading(false) 
+    }
+  }
+
+  // ✅ SILENT BACKGROUND POLLER (Safety net for dropped WebSockets)
+  useEffect(() => {
+    if (!identity.sk) return;
+    const interval = setInterval(() => {
+      console.log("Background sync: checking for missed messages...");
+      fetchChats(); // This quietly merges new data into state
+    }, 10000); // Every 10 seconds
+    return () => clearInterval(interval);
+  }, [identity.sk, identity.pk, groups.length]);
+
+  useEffect(() => { 
+    if (!identity.sk) return;
+    
+    // Authenticate with the group relay on startup
+
+    let isMounted = true;
+    let subs = [];
+
+    const setupRealTime = async () => {
+      const { SimplePool } = await import('nostr-tools');
+      const pool = new SimplePool({ enablePing: true, enableReconnect: true });
+      poolRef.current = pool;
+      
+      // Initial fetch to load history from Dexie
+      await fetchChats(true);
+
+      // ✅ FIX: Create separate subscriptions for each filter
+      // ✅ FIX: Only listen to group messages if we actually have groups loaded
+      // We use the background poller for groups if the WebSocket drops.
+      const filters = [
+        { kinds: [9], since: Math.floor(Date.now() / 1000) - 30 },
+        { kinds: [4], '#p': [identity.pk], since: Math.floor(Date.now() / 1000) - 30 }, // Incoming DMs
+        { kinds: [4], authors: [identity.pk], since: Math.floor(Date.now() / 1000) - 30 }, // Outgoing DMs
+      ];
+      
+      // If we have groups, add a subscription for them specifically
+      const groupIds = groups.map(g => g.id);
+      if (groupIds.length > 0) {
+        const tTags = groupIds.map(id => `cipher_group_msg_${id}`);
+        filters.push({ kinds: [9], '#t': tTags, since: Math.floor(Date.now() / 1000) - 30 });
+      }
+
+      filters.forEach(filter => {
+        const sub = pool.subscribe(generalRelays, filter, {
+          onevent: async (event) => {
+            if (!isMounted) return;
+            console.log("Live event received:", event);
+            
+            if (event.kind === 4) {
+              try {
+                const { nip44 } = await import('nostr-tools');
+                const isSender = event.pubkey === identity.pk;
+                const counterparty = isSender ? event.tags.find(t => t[0] === 'p')?.[1] : event.pubkey;
+                if (!counterparty) return;
+
+                const shared = nip44.v2.utils.getConversationKey(identity.sk, counterparty);
+                const text = nip44.v2.decrypt(event.content, shared);
+                let data = {}; try { data = JSON.parse(text) } catch (e) { data = { type: 'text', message: text } }
+                
+                if (data.type === 'typing' || data.type === 'read' || data.type === 'pin') return;
+
+                const replyTag = event.tags.find(t => t[0] === 'e' && t[3] === 'reply');
+                const clientId = event.tags.find(t => t[0] === 'client')?.[1];
+
+                const newMsg = {
+                  id: event.id, clientId, isSender, timestamp: event.created_at, data, pubkey: event.pubkey, replyTo: replyTag ? replyTag[1] : null
+                };
+
+                await saveMessage(counterparty, newMsg);
+                setDms(prev => {
+                  const chatMsgs = prev[counterparty] || [];
+                  // Ignore if we already have the real message
+                  if (chatMsgs.find(m => m.id === event.id)) return prev;
+                  
+                  // Remove the optimistic 'temp-' message if it exists
+                  const filtered = chatMsgs.filter(m => m.clientId !== clientId);
+                  
+                  return { ...prev, [counterparty]: [...filtered, newMsg].sort(sortMessages) };
+                });
+
+              } catch (e) { console.error("Real-time DM error:", e); }
+            } 
+            else if (event.kind === 9) {
+              // ✅ NIP-29: Group messages are kind 9 with h tag
+              const hTag = event.tags.find(t => t[0] === 'h');
+              if (!hTag) return;
+              const groupId = hTag[1];
+              
+              const replyTag = event.tags.find(t => t[0] === 'e' && t[3] === 'reply');
+              const clientId = event.tags.find(t => t[0] === 'client')?.[1];
+              setGroupMessages(prev => {
+                const groupMsgs = prev[groupId] || [];
+                let data = {}; try { data = JSON.parse(event.content) } catch (e) {}
+
+                const existingIndex = groupMsgs.findIndex(m => 
+                  (clientId && m.clientId === clientId) || 
+                  (m.isSender === (event.pubkey === identity.pk) && data.message && JSON.parse(m.rawContent || '{}').message === data.message && Math.abs(m.timestamp - event.created_at) < 5)
+                );
+
+                if (existingIndex >= 0) {
+                  const newMsgs = [...groupMsgs];
+                  newMsgs[existingIndex] = { ...newMsgs[existingIndex], id: event.id, clientId };
+                  saveMessage(groupId, newMsgs[existingIndex]);
+                  return { ...prev, [groupId]: newMsgs };
+                } else {
+                  const newMsg = {
+                    id: event.id, clientId, isSender: event.pubkey === identity.pk, 
+                    pubkey: event.pubkey, timestamp: event.created_at, local_timestamp: Date.now(),
+                    rawContent: event.content, replyTo: replyTag ? replyTag[1] : null
+                  };
+                  newMsg.isGroup = true; // ✅ Tag WebSocket Groups
+                  saveMessage(groupId, newMsg);
+                  if (!newMsg.isSender && activeGroup?.id !== groupId) {
+                    setUnreadCounts(prev => ({ ...prev, [groupId]: (prev[groupId] || 0) + 1 }));
+                  }
+                  return { ...prev, [groupId]: [...groupMsgs, newMsg].sort(sortMessages) };
+                }
+              });
+            }
+          }
+        });
+        console.log('✅ Started real-time subscription for filter:', filter);
+        subs.push(sub);
+      });
+    };
+
+    setupRealTime();
+
+    return () => {
+      isMounted = false;
+      // subs.forEach(sub => sub.close()); // Don't close subs on unmount to prevent flickering
+      // if (poolRef.current) poolRef.current.close(generalRelays);
+    };
+  }, [identity.sk, identity.pk, groups.length])
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [dms, activeDm, groupMessages, activeGroup, reactions, replyingTo])
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingImage(true)
+    setToast({ type: 'success', message: "Uploading image..." })
+    try {
+      const blob = await uploadToBlossom(file, {
+        signer: {
+          getPublicKey: async () => identity.pk,
+          signEvent: async (event) => {
+            const { finalizeEvent } = await import('nostr-tools')
+            return finalizeEvent(event, identity.sk)
+          }
+        },
+      })
+      await sendMessage(blob.url, true)
+      setToast({ type: 'success', message: "Image sent!" })
+    } catch (err) {
+      console.error(err)
+      setToast({ type: 'error', message: "Image upload failed" })
+    } finally {
+      setUploadingImage(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = mediaRecorder
+      audioChunksRef.current = []
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data)
+      }
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        const file = new File([audioBlob], 'voice_note.webm', { type: 'audio/webm' })
+        
+        setUploadingImage(true)
+        setToast({ type: 'success', message: "Uploading voice note..." })
+        
+        try {
+          const blob = await uploadToBlossom(file, {
+            signer: {
+              getPublicKey: async () => identity.pk,
+              signEvent: async (event) => {
+                const { finalizeEvent } = await import('nostr-tools')
+                return finalizeEvent(event, identity.sk)
+              }
+            },
+          })
+          await sendMessage('', false, blob.url)
+          setToast({ type: 'success', message: "Voice note sent!" })
+        } catch (err) {
+          console.error(err)
+          setToast({ type: 'error', message: "Voice upload failed" })
+        } finally {
+          setUploadingImage(false)
+        }
+      }
+
+      mediaRecorder.start()
+      setIsRecording(true)
+    } catch (err) {
+      console.error(err)
+      setToast({ type: 'error', message: "Microphone access denied" })
+    }
+  }
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop()
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop())
+      setIsRecording(false)
+    }
+  }
+
+  const sendMessage = async (text, isImage = false, audioUrl = null) => {
+    if (!text.trim() && !audioUrl) return
+    const tempId = `temp-${Date.now()}`
+    
+    let msgPayload = { type: 'text', message: text }
+    if (isImage) msgPayload = { type: 'image', url: text }
+    if (audioUrl) msgPayload = { type: 'audio', url: audioUrl }
+    
+    const replyId = replyingTo ? replyingTo.id : null
+    
+    // ✅ STRICT ROUTING: Only use activeDm if we are actually in the DM view
+    const isDmView = view === 'dm';
+    const chatId = isDmView ? activeDm : activeGroup?.id;
+
+    const newMsg = { 
+      id: tempId, clientId: tempId, isSender: true, pubkey: identity.pk, 
+      timestamp: Math.floor(Date.now() / 1000), local_timestamp: Date.now(), replyTo: replyId 
+    }
+    
+    if (isDmView && activeDm) {
+      newMsg.data = msgPayload;
+      newMsg.isGroup = false; // ✅ Explicitly tag as DM
+      setDms(prev => ({ ...prev, [activeDm]: [...(prev[activeDm] || []), newMsg].sort(sortMessages) }))
+    } else if (activeGroup) {
+      newMsg.rawContent = JSON.stringify(msgPayload);
+      newMsg.isGroup = true; // ✅ Explicitly tag as Group
+      setGroupMessages(prev => ({ ...prev, [activeGroup.id]: [...(prev[activeGroup.id] || []), newMsg].sort(sortMessages) }))
+    }
+
+    await saveMessage(chatId, newMsg)
+
+    setReplyText(''); setReplyingTo(null); setShowEmojiPicker(false);
+
+    try {
+      const pool = await getAuthenticatedPool(identity)
+      const { finalizeEvent } = await import('nostr-tools')
+      const { nip44 } = await import('nostr-tools')
+
+      if (activeDm) {
+        let targetDm = activeDm.trim();
+        if (targetDm.length > 64) targetDm = targetDm.slice(0, 64);
+        
+        const tags = [['p', targetDm], ['client', tempId]]
+        if (replyId) tags.push(['e', replyId, '', 'reply'])
+        
+        let shared;
+        try {
+          shared = nip44.v2.utils.getConversationKey(identity.sk, targetDm);
+        } catch (e) {
+          console.error("Invalid public key:", targetDm, e);
+          setToast({ type: 'error', message: "This public key is invalid. Please ask for a valid npub." });
+          return; // Stop sending gracefully
+        }
+        const encrypted = nip44.v2.encrypt(JSON.stringify(msgPayload), shared)
+        const event = finalizeEvent({ kind: 4, created_at: Math.floor(Date.now() / 1000), tags, content: encrypted }, identity.sk)
+        await Promise.allSettled(pool.publish(generalRelays, event))
+      } else if (activeGroup) {
+        const tags = [['t', `cipher_group_msg_${activeGroup.id}`], ['client', tempId]]
+        if (replyId) tags.push(['e', replyId, '', 'reply'])
+        // ✅ FIX: Use kind: 1 instead of 42 to bypass relay bans
+        const event = finalizeEvent({ kind: 9, created_at: Math.floor(Date.now() / 1000), tags, content: JSON.stringify(msgPayload) }, identity.sk)
+        // Publish to the dedicated group relay
+        await Promise.allSettled(pool.publish(groupRelays, event))
+      }
+    } catch (err) { 
+      console.error("Full Encryption/Send Error:", err);
+      setToast({ type: 'error', message: "Failed to send: " + err.message }) 
+    }
+  }
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return
+    setIsSearching(true)
+    setSearchResults([])
+
+    // Trim extra characters if they pasted a 65-char hex string by accident
+    let rawQuery = searchQuery.trim().replace(/^@/, '');
+    if (/^[0-9a-f]{64,}$/i.test(rawQuery)) {
+      rawQuery = rawQuery.slice(0, 64);
+    }
+    
+    console.log("Searching for:", rawQuery);
+
+    const isNpub = rawQuery.startsWith('npub1');
+    const isHex = /^[0-9a-f]{64}$/i.test(rawQuery);
+    const isPartialHex = /^[0-9a-f]{10,63}$/i.test(rawQuery);
+    const isNip05 = rawQuery.includes('@');
+
+    if (isPartialHex) {
+      setToast({ type: 'error', message: "Hex public keys must be exactly 64 characters. Yours is " + rawQuery.length + " characters." });
+      setIsSearching(false);
+      return;
+    }
+    
+    try {
+      const { SimplePool, nip19 } = await import('nostr-tools')
+      const pool = new SimplePool({ enablePing: true, enableReconnect: true })
+
+      // --- LAYER 1: INSTANT LOCAL CACHE ---
+      const localMatches = await db.profiles.filter(p => 
+        (p.name && p.name.toLowerCase().includes(rawQuery.toLowerCase())) || 
+        (p.displayName && p.displayName.toLowerCase().includes(rawQuery.toLowerCase()))
+      ).toArray();
+
+      if (localMatches.length > 0) {
+        setSearchResults(localMatches.map(p => ({ type: 'user', pubkey: p.pubkey, name: p.displayName, picture: p.picture })));
+        setIsSearching(false);
+        return;
+      }
+
+      // --- LAYER 2: NIP-05 LOOKUP ---
+      if (isNip05 && !isNpub) {
+        const [name, domain] = rawQuery.split('@');
+        try {
+          const res = await fetch(`https://${domain}/.well-known/nostr.json?name=${name}`);
+          const data = await res.json();
+          const targetPubkey = data.names?.[name];
+          if (targetPubkey) {
+            setSearchResults([{ type: 'user', pubkey: targetPubkey, name: name, picture: null }]);
+            setIsSearching(false);
+            return;
+          }
+        } catch (e) { console.warn("NIP-05 lookup failed, continuing..."); }
+      }
+
+      // --- LAYER 0: CUSTOM GROUP ID (16 CHARS) ---
+      if (rawQuery.length === 16 && /^[a-z0-9]+$/.test(rawQuery)) {
+        setSearchResults([{
+          type: 'group',
+          id: rawQuery,
+          name: 'Group ' + rawQuery,
+          isChannel: false,
+          creator: ''
+        }]);
+        setIsSearching(false);
+        return;
+      }
+
+      // --- LAYER 3: DIRECT NPUB/HEX LOOKUP ---
+      if (isNpub || isHex) {
+        let targetPubkey = rawQuery;
+        
+        if (isNpub) {
+          const decoded = nip19.decode(rawQuery);
+          targetPubkey = decoded.data;
+          // FIX: nostr-tools sometimes returns a Uint8Array instead of a hex string
+          if (typeof targetPubkey !== 'string') {
+            targetPubkey = Array.from(targetPubkey).map(b => b.toString(16).padStart(2, '0')).join('');
+          }
+        }
+
+        // Set the result IMMEDIATELY so the UI updates instantly, even if the relay is slow
+        setSearchResults([{ type: 'user', pubkey: targetPubkey, name: targetPubkey.slice(0,8), picture: null }]);
+        
+        // Then try to fetch their actual profile to get their name/picture
+        const profileEvents = await queryWithTimeout(
+          pool, 
+          ['wss://purplepag.es', 'wss://nos.lol', 'wss://relay.primal.net'], 
+          { kinds: [0], authors: [targetPubkey] }, 
+          4000
+        );
+
+        if (profileEvents.length > 0) {
+          try {
+            const p = JSON.parse(profileEvents[0].content);
+            setSearchResults([{ 
+              type: 'user', 
+              pubkey: targetPubkey, 
+              name: p.display_name || p.name || targetPubkey.slice(0,8), 
+              picture: p.picture 
+            }]);
+          } catch (e) {}
+        }
+        
+        setIsSearching(false);
+        return;
+      }
+
+      // --- LAYER 4: VERTEX DVM PROFILE SEARCH (NEW) ---
+      try {
+        const { finalizeEvent } = await import('nostr-tools');
+        const dvmPool = new SimplePool();
+        // 1. Create a request event (kind 5315)
+        const requestEvent = finalizeEvent({
+          kind: 5315,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [['param', 'search', rawQuery], ['param', 'limit', '10']],
+          content: ''
+        }, identity.sk);
+
+        // 2. Publish to Vertex
+        await Promise.allSettled(dvmPool.publish(['wss://relay.vertexlab.io'], requestEvent));
+
+        // 3. Fetch the response (kind 6315)
+        const responseEvents = await Promise.race([
+          dvmPool.querySync(['wss://relay.vertexlab.io'], { kinds: [6315], '#e': [requestEvent.id] }),
+          new Promise(resolve => setTimeout(() => resolve([]), 4000)) // 4s timeout
+        ]);
+
+        if (responseEvents.length > 0) {
+          const responseEvent = responseEvents[0];
+          const pubkeys = JSON.parse(responseEvent.content).map(p => p.pubkey);
+          
+          if (pubkeys.length > 0) {
+            // Fetch the actual profiles for these pubkeys
+            const profileEvents = await pool.querySync(['wss://nos.lol', 'wss://relay.primal.net'], { kinds: [0], authors: pubkeys });
+            const profiles = profileEvents.map(ev => {
+              const data = JSON.parse(ev.content);
+              return { type: 'user', pubkey: ev.pubkey, name: data.display_name || data.name || ev.pubkey.slice(0, 8), picture: data.picture };
+            });
+            setSearchResults(profiles);
+            setIsSearching(false);
+            return;
+          }
+        }
+      } catch (dvmError) {
+        console.warn("Vertex DVM search failed, falling back to NIP-50...", dvmError);
+      }
+
+      // --- LAYER 5: STANDARD NIP-50 FALLBACK ---
+      const publicSearchRelays = ['wss://relay.vertexlab.io', 'wss://relay.noswhere.com', 'wss://relay.primal.net'];
+      const events = await Promise.race([
+        Promise.all([
+          pool.querySync(publicSearchRelays, { kinds: [0, 41], search: rawQuery, limit: 30 }),
+          pool.querySync(['wss://groups.aegispayhq.com'], { kinds: [9002], limit: 200 })
+        ]).then(res => [...res[0], ...res[1]]),
+        new Promise(resolve => setTimeout(() => resolve([]), 4000))
+      ]);
+
+      let matchedProfiles = [];
+      let matchedGroups = [];
+
+      events.forEach(ev => {
+        if (ev.kind === 0) {
+          try {
+            const d = JSON.parse(ev.content);
+            matchedProfiles.push({ type: 'user', pubkey: ev.pubkey, name: d.display_name || d.name || ev.pubkey.slice(0,8), picture: d.picture });
+          } catch(e) {}
+        } else if (ev.kind === 41) {
+          try {
+            const d = JSON.parse(ev.content);
+            matchedGroups.push({ type: 'group', id: ev.tags.find(t=>t[0]==='d')?.[1], name: d.name, isChannel: d.isChannel, creator: ev.pubkey });
+          } catch(e) {}
+        } else if (ev.kind === 39000 || ev.kind === 9002) {
+          const getTag = (t) => ev.tags.find(x => x[0] === t)?.[1];
+          const groupId = getTag('h') || getTag('d');
+          const groupName = getTag('name');
+          if (groupId && groupName && groupName.toLowerCase().includes(rawQuery.toLowerCase())) {
+            matchedGroups.push({ type: 'group', id: groupId, name: groupName, isChannel: false, creator: ev.pubkey });
+          }
+        }
+      });
+
+      // Fallback: If the user pastes a 16-character Group ID, let them join it directly
+      if (rawQuery.length >= 12 && rawQuery.length <= 20 && !rawQuery.includes(' ')) {
+        if (!matchedGroups.find(g => g.id === rawQuery)) {
+          matchedGroups.push({ type: 'group', id: rawQuery, name: "Group " + rawQuery, isChannel: false, creator: "" });
+        }
+      }
+
+      const uniqueUsers = Array.from(new Map(matchedProfiles.map(p => [p.pubkey, p])).values());
+      const uniqueGroups = Array.from(new Map(matchedGroups.map(g => [g.id, g])).values());
+      
+      setSearchResults([...uniqueUsers.slice(0, 10), ...uniqueGroups.slice(0, 10)]);
+
+    } catch (err) { 
+      console.error("Search failed entirely:", err); 
+    } finally { 
+      setIsSearching(false); 
+    }
+  }
+
+
+  const joinGroupById = async (groupId) => {
+    if (!groupId) return;
+    setIsSearching(true);
+    let realName = 'Group ' + groupId;
+
+    try {
+      const ndk = getNDK(identity.sk);
+      // NDK fetches the strict relay metadata perfectly
+      const events = await ndk.fetchEvents({ kinds: [39000, 9002], '#d': [groupId], '#h': [groupId] });
+      
+      if (events.size > 0) {
+        const ev = Array.from(events)[0];
+        realName = ev.tags.find(t => t[0] === 'name')?.[1] || realName;
+      }
+      
+      // Send join request via NDK
+      const joinEv = new NDKEvent(ndk, {
+        kind: 9021, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId]], content: "Joining via Cipher"
+      });
+      await joinEv.publish();
+      
+    } catch (e) { 
+      console.error("[joinGroupById] NDK Error:", e); 
+    }
+
+    const newGroupObj = { id: groupId, name: realName, isChannel: false, creator: '' };
+    const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+    if (!localGroups.find(g => g.id === groupId)) {
+      localGroups.push(newGroupObj);
+      localStorage.setItem('cipher_my_groups', JSON.stringify(localGroups));
+    }
+
+    setGroups(prev => [newGroupObj, ...(prev || []).filter(g => g.id !== groupId)]);
+    openChat('group', groupId, newGroupObj);
+    setIsSearching(false);
+    
+    if (window.location.search.length > 0) window.history.replaceState({}, document.title, window.location.pathname);
+  };
+
+
+
+
+
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const naddrParam = urlParams.get('naddr');
+    const joinId = urlParams.get('group') || urlParams.get('join') || urlParams.get('g');
+    if (naddrParam && identity?.pk) { handleNaddr(naddrParam); }
+    else if (joinId && identity?.pk) { joinGroupById(joinId); }
+  }, [identity?.pk]);
+
+
+
+  const handleNaddr = async (naddr) => {
+    try {
+      const { nip19 } = await import('nostr-tools');
+      const decoded = nip19.decode(naddr);
+      if (decoded.type === 'naddr' && decoded.data.kind === 39000) {
+        const groupId = decoded.data.identifier;
+        const relayUrl = decoded.data.relays?.[0] || 'wss://groups.aegispayhq.com';
+        console.log("[handleNaddr] Decoded group:", groupId, "on relay:", relayUrl);
+        await joinGroupById(groupId);
+      }
+    } catch (e) {
+      console.error("[handleNaddr] Failed to decode naddr:", e);
+    }
+  };
+
+  const leaveGroup = async (groupId) => {
+    if (!window.confirm("Are you sure you want to leave this group?")) return;
+    
+    try {
+      const { finalizeEvent } = await import('nostr-tools');
+      const pool = await getAuthenticatedPool(identity);
+      // NIP-29 Leave Group (kind 9022)
+      const leaveEv = finalizeEvent({
+        kind: 9022, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId]], content: ""
+      }, identity.sk);
+      await Promise.allSettled(pool.publish(groupRelays, leaveEv));
+    } catch (e) {
+      console.error("Failed to send leave event to relay:", e);
+    }
+
+    // Remove from localStorage
+    const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+    const updated = localGroups.filter(g => g.id !== groupId);
+    localStorage.setItem('cipher_my_groups', JSON.stringify(updated));
+    
+    // Update state and go back to list
+    if (typeof setGroups === 'function') setGroups(updated);
+    setView('list');
+    if (typeof fetchChats === 'function') fetchChats();
+  };
+
+  const fetchGroups = async () => {
+    try {
+      const ndk = getNDK(identity.sk);
+      // NDK automatically handles strict relay rules!
+      const events = await ndk.fetchEvents({ kinds: [39000, 9002], limit: 200 });
+      
+      const parsed = Array.from(events).map(ev => {
+        const tag = (n) => ev.tags.find((t) => t[0] === n)?.[1];
+        const id = tag('d') || tag('h') || ev.id;
+        return { id, name: tag('name') || id, about: tag('about') || '', kind: 'group', raw: ev };
+      });
+
+      // Deduplicate by ID
+      const uniqueGroups = Array.from(new Map(parsed.map(g => [g.id, g])).values());
+      
+      const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+      const allGroups = [...uniqueGroups];
+      localGroups.forEach(lg => {
+        if (!allGroups.find(g => g.id === lg.id)) allGroups.push(lg);
+      });
+      
+      setGroups(allGroups);
+      return allGroups;
+    } catch (e) { 
+      console.error("[fetchGroups] NDK failed:", e); 
+      return []; 
+    }
+  };
+
+
+  const createGroup = async (e) => {
+    if (e) e.preventDefault();
+    if (!newGroupName.trim()) return;
+    setLoading(true);
+    try {
+      const { finalizeEvent } = await import("nostr-tools");
+      const pool = await getAuthenticatedPool(identity);
+      const groupId = (globalThis.crypto?.randomUUID?.() || Date.now().toString()).replace(/-/g, "").slice(0, 16);
+      console.log("[createGroup] groupId:", groupId);
+      const createEv = finalizeEvent({
+        kind: 9007, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId], ["name", newGroupName], ["about", newGroupAbout || ""]],
+        content: "",
+      }, identity.sk);
+      console.log("[9007] sending:", createEv);
+      const r9007 = await Promise.allSettled(pool.publish(groupRelays, createEv));
+      let ok = 0;
+      r9007.forEach((r, i) => {
+        if (r.status === "fulfilled") { console.log("[9007]", groupRelays[i], "->", r.value); ok++; }
+        else { console.error("[9007]", groupRelays[i], "-> REJECTED:", r.reason); }
+      });
+      if (!ok) throw new Error("No relay accepted 9007");
+      const metaEv = finalizeEvent({
+        kind: 9002, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", groupId], ["name", newGroupName], ["about", newGroupAbout || ""]],
+        content: "",
+      }, identity.sk);
+      const r9002 = await Promise.allSettled(pool.publish(groupRelays, metaEv));
+      r9002.forEach((r, i) => {
+        if (r.status === "fulfilled") console.log("[9002]", groupRelays[i], "->", r.value);
+        else console.error("[9002]", groupRelays[i], "-> REJECTED:", r.reason);
+      });
+      setShowCreateGroup(false); setShowMenu(false);
+      setNewGroupName(""); setNewGroupAbout(""); setIsChannel(false);
+      
+      console.warn("[createGroup] Optimistic insert into UI!");
+      
+      // Format exactly how the UI render expects it
+      const newGroupObj = {
+        id: groupId,
+        name: newGroupName,
+        about: newGroupAbout || "",
+        isChannel: isChannel,
+        creator: identity.pk,
+        members: [identity.pk]
+      };
+
+      if (typeof setGroups === 'function') {
+        const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+        if (!localGroups.find(g => g.id === groupId)) {
+          localGroups.push(newGroupObj);
+          localStorage.setItem('cipher_my_groups', JSON.stringify(localGroups));
+        }
+        setGroups((prev) => [newGroupObj, ...(prev || []).filter(c => c.id !== groupId)]);
+      }
+    } catch (e) { console.error("[createGroup] FAILED:", e);  }
+    finally { setLoading(false); }
+  };
+
+  const ToastUI = () => toast && (
+    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-surfaceLight border border-white/10 px-5 py-3 rounded-2xl shadow-2xl animate-slide-up flex items-center gap-3">
+      <div className={`w-2 h-2 rounded-full ${toast.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`} />
+      <span className="text-sm font-semibold text-white">{toast.message}</span>
+    </div>
+  )
+
+  const Emojis = ['😀','😂','🥰','😎','😭','🤔','👍','🔥','❤️','🚀','💯','🙏','✨','💀','🤯','🤫','💩','🤝','👀','💸']
+
+  const ContextMenu = () => {
+    if (!selectedMessage) return null
+    const isMyMsg = selectedMessage.pubkey === identity.pk
+    return (
+      <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex flex-col justify-end" onClick={() => setSelectedMessage(null)}>
+        <div className="bg-surface w-full rounded-t-3xl p-4 pb-8 animate-slide-up" onClick={e => e.stopPropagation()}>
+          <div className="w-12 h-1 bg-white/20 rounded-full mx-auto mb-6" />
+          <div className="flex justify-center gap-4 mb-6">
+            {['❤️', '🔥', '👍', '😂', '😮'].map(emoji => (
+              <button key={emoji} onClick={() => { setSelectedMessage(null); }} className="w-12 h-12 bg-surfaceLight rounded-full flex items-center justify-center text-2xl hover:scale-110 transition-transform">
+                {emoji}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <button onClick={() => { setReplyingTo(selectedMessage); setSelectedMessage(null); }} className="flex flex-col items-center justify-center gap-1 p-3 bg-surfaceLight text-white rounded-xl font-semibold text-xs"><Reply size={20} /> Reply</button>
+            <button onClick={() => { setForwardingMsg(selectedMessage); setShowForwardModal(true); setSelectedMessage(null); }} className="flex flex-col items-center justify-center gap-1 p-3 bg-surfaceLight text-white rounded-xl font-semibold text-xs"><Forward size={20} /> Forward</button>
+            <button onClick={() => { navigator.clipboard.writeText(selectedMessage.text); setSelectedMessage(null); setToast({type:'success', message:'Copied'}) }} className="flex flex-col items-center justify-center gap-1 p-3 bg-surfaceLight text-white rounded-xl font-semibold text-xs"><Smile size={20} /> Copy</button>
+            {isMyMsg && (
+              <button onClick={() => setSelectedMessage(null)} className="col-span-3 flex items-center justify-center gap-2 p-3 bg-red-500/10 text-red-400 rounded-xl font-semibold text-sm mt-2">
+                <Trash2 size={18} /> Delete Message
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const markAsRead = async (chatId) => {
+    try {
+      await db.chatReads.put({ chatId, lastRead: Math.floor(Date.now() / 1000) });
+      setUnreadCounts(prev => ({ ...prev, [chatId]: 0 }));
+    } catch(e) {}
+  }
+
+  const openChat = (type, id, groupObj = null) => {
+    markAsRead(id);
+    if (type === 'dm') { 
+      setActiveDm(id); 
+      setActiveGroup(null); // ✅ Clear group state
+      setView('dm'); 
+    }
+    else { 
+      setActiveGroup(groupObj); 
+      setActiveDm(null); // ✅ Clear DM state
+      setView('group'); 
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-4 h-full animate-fade-in">
+        <div className="flex justify-between items-center mb-6 px-2">
+          <div className="h-8 w-24 bg-surfaceLight rounded-lg animate-pulse" />
+          <div className="flex gap-2">
+            <div className="h-8 w-8 bg-surfaceLight rounded-full animate-pulse" />
+            <div className="h-8 w-8 bg-surfaceLight rounded-full animate-pulse" />
+          </div>
+        </div>
+        
+        <div className="space-y-3">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="bg-surface p-4 rounded-2xl border border-white/5 flex items-center gap-4">
+              {/* Avatar Skeleton */}
+              <div className="w-12 h-12 rounded-full bg-surfaceLight animate-pulse shrink-0" />
+              {/* Text Skeletons */}
+              <div className="flex-1 space-y-2">
+                <div className="h-4 bg-surfaceLight rounded animate-pulse w-1/3" />
+                <div className="h-3 bg-surfaceLight rounded animate-pulse w-1/2" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // --- CHAT LIST VIEW ---
+  if (view === 'list') {
+    // STRICT FILTER: Only include DMs if we have a REAL profile for them
+    const dmList = Object.entries(dms).map(([pubkey, msgs]) => {
+      const profile = profiles[pubkey];
+      
+      // Drop the chat entirely if there's no profile, no name, or if the name is just a hex string
+      if (!profile || !profile.name || /^[0-9a-f]{8,64}$/i.test(profile.name)) {
+        return null;
+      }
+      
+      return { type: 'dm', id: pubkey, lastMsg: msgs[msgs.length - 1], profile };
+    }).filter(Boolean); // Remove nulls
+
+    const groupList = groups.map(g => ({ type: 'group', id: g.id, group: g, lastMsg: groupMessages[g.id]?.[groupMessages[g.id].length - 1] }))
+    const allChats = [...dmList, ...groupList].sort((a, b) => (b.lastMsg?.timestamp || 0) - (a.lastMsg?.timestamp || 0))
+
+    return (
+      <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} transition={{ duration: 0.2 }} className="p-4 h-full relative">
+        <ToastUI />
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-2xl font-bold tracking-tight">Chats</h2>
+          <div className="flex gap-2">
+            <button onClick={fetchChats} className="p-2 text-white/50 hover:text-white"><RefreshCw size={20}/></button>
+            <button onClick={() => setView('search')} className="p-2 text-white/50 hover:text-white"><Search size={20}/></button>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          {allChats.length === 0 && <p className="text-center text-white/40 mt-10">No chats yet.</p>}
+          {allChats.map((chat) => {
+            if (chat.type === 'dm') {
+              // ✅ FIX: Use hoisted profiles
+              const profile = profiles[chat.id] || { displayName: 'Unknown User', picture: null }
+              return (
+                <div key={chat.id} onClick={() => openChat('dm', chat.id)} className="bg-surface p-4 rounded-2xl border border-white/5 active:scale-[0.98] cursor-pointer flex items-center gap-4">
+                  {profile.picture ? <img src={profile.picture} className="w-12 h-12 rounded-full object-cover" /> : <div className="w-12 h-12 rounded-full bg-surfaceLight flex items-center justify-center font-bold">{profile.displayName.charAt(0)}</div>}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate">{profile.displayName}</p>
+                    <p className="text-xs text-white/50 truncate">{chat.lastMsg.data?.type === 'cipher_order' ? '📦 Order' : chat.lastMsg.data?.type === 'image' ? '🖼️ Photo' : chat.lastMsg.data?.type === 'audio' ? '🎤 Voice Note' : chat.lastMsg.data?.message}</p>
+                  </div>
+                  {unreadCounts[chat.id] > 0 && (
+                    <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center text-[10px] font-bold text-white shrink-0">
+                      {unreadCounts[chat.id]}
+                    </div>
+                  )}
+                </div>
+              )
+            } else {
+              const Icon = chat.group.isChannel ? Megaphone : Users
+              return (
+                <div key={chat.id} onClick={() => openChat('group', chat.id, chat.group)} className="bg-surface p-4 rounded-2xl border border-white/5 active:scale-[0.98] cursor-pointer flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${chat.group.isChannel ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                    <Icon size={20} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate">{chat.group.name}</p>
+                    <p className="text-xs text-white/50 truncate">{chat.group.isChannel ? '📢 Channel' : '👥 Public Group'}</p>
+                  </div>
+                  {unreadCounts[chat.id] > 0 && (
+                    <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center text-[10px] font-bold text-white shrink-0">
+                      {unreadCounts[chat.id]}
+                    </div>
+                  )}
+                </div>
+              )
+            }
+          })}
+        </div>
+
+              {showCreateGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-[#111] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
+            <button onClick={() => setShowCreateGroup(false)} className="absolute top-4 right-4 text-white/50 hover:text-white">✕</button>
+            <h2 className="text-xl font-bold mb-4">New Group/Channel</h2>
+            <form onSubmit={createGroup} className="space-y-4">
+              <div>
+                <label className="block text-sm text-white/60 mb-1">Name</label>
+                <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="Group name" className="w-full bg-black border border-white/10 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" autoFocus />
+              </div>
+              <div>
+                <label className="block text-sm text-white/60 mb-1">About (Optional)</label>
+                <input type="text" value={newGroupAbout} onChange={(e) => setNewGroupAbout(e.target.value)} placeholder="What is this about?" className="w-full bg-black border border-white/10 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" checked={isChannel} onChange={(e) => setIsChannel(e.target.checked)} id="isChannel" className="rounded border-white/10 bg-black" />
+                <label htmlFor="isChannel" className="text-sm text-white/80">Create as Channel</label>
+              </div>
+              <button type="submit" onClick={createGroup} disabled={loading || newGroupName.trim().length === 0} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-colors">
+                {loading ? 'Creating...' : 'Create'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+        {showMenu && (
+          <div className="absolute inset-0 z-40 bg-black/50 backdrop-blur-sm" onClick={() => setShowMenu(false)}>
+            <div className="absolute bottom-24 right-6 flex flex-col gap-3 items-end">
+              <button onClick={() => { setShowMenu(false); setView('search') }} className="flex items-center gap-3 bg-surface px-4 py-3 rounded-full border border-white/10 shadow-xl animate-slide-up">
+                <span className="text-sm font-semibold">New Chat</span>
+                <div className="p-2 bg-blue-500 rounded-full text-white"><MessageIcon size={18}/></div>
+              </button>
+              <button onClick={() => { setShowMenu(false); setShowCreateGroup(true) }} className="flex items-center gap-3 bg-surface px-4 py-3 rounded-full border border-white/10 shadow-xl animate-slide-up" style={{ animationDelay: '50ms' }}>
+                <span className="text-sm font-semibold">New Group/Channel</span>
+                <div className="p-2 bg-green-500 rounded-full text-white"><Users size={18}/></div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        <button onClick={() => setShowMenu(true)} className="fixed bottom-24 right-6 p-4 bg-white text-black rounded-full shadow-lg hover:scale-105 active:scale-90 transition-transform z-50">
+          <Plus size={24} />
+        </button>
+      </motion.div>
+    )
+  }
+
+  // --- SEARCH VIEW ---
+  if (view === 'search') {
+    return (
+      <div className="flex flex-col h-[calc(100vh-80px)] bg-base">
+        <ToastUI />
+        <div className="p-4 border-b border-white/5 flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setView('list')} className="p-2 -ml-2 text-white/60"><ArrowLeft size={20} /></button>
+            <div className="flex-1 flex items-center bg-surfaceLight rounded-full px-4 py-2 border border-white/10">
+              <Search size={16} className="text-white/40 mr-2"/>
+              <textarea 
+                autoFocus 
+                rows={1}
+                value={searchQuery} 
+                onChange={(e) => setSearchQuery(e.target.value)} 
+                onKeyDown={(e) => { if(e.key === 'Enter') { e.preventDefault(); handleSearch(); } }} 
+                placeholder="Search @users, groups, or paste npub/hex..." 
+                className="bg-transparent text-sm text-white outline-none w-full resize-none pt-1" 
+              />
+            </div>
+            <button onClick={handleSearch} className="text-sm font-bold text-blue-400">Search</button>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <input 
+              type="text" 
+              id="join-group-id"
+              placeholder="Paste Group ID to join directly..." 
+              className="flex-1 bg-surfaceLight border border-white/10 rounded-lg px-4 py-2 text-sm text-white outline-none focus:border-blue-500"
+            />
+            <button 
+              onClick={() => { const gid = document.getElementById('join-group-id').value.trim(); if (gid) joinGroupById(gid); }}
+              className="bg-green-600 hover:bg-green-500 text-white text-sm font-bold px-4 py-2 rounded-lg"
+            >
+              Join
+            </button>
+          </div>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {isSearching && <p className="text-center text-white/50 animate-pulse">Searching relays...</p>}
+          {searchResults.map((res, i) => (
+            <div key={i} onClick={() => {
+              if (res.type === 'user') { openChat('dm', res.pubkey); }
+              else if (res.type === 'group') { 
+                // Save to our local list so it doesn't disappear!
+                const localGroups = JSON.parse(localStorage.getItem('cipher_my_groups') || '[]');
+                if (!localGroups.find(g => g.id === res.id)) {
+                  localGroups.push({ id: res.id, name: res.name, isChannel: res.isChannel, creator: res.creator });
+                  localStorage.setItem('cipher_my_groups', JSON.stringify(localGroups));
+                }
+                openChat('group', res.id, res); 
+              }
+              else { openChat('group', res.id, { id: res.id, name: res.name, isChannel: res.isChannel, creator: res.creator }); }
+            }} className="bg-surface p-4 rounded-2xl border border-white/5 flex items-center gap-4 cursor-pointer">
+              {res.type === 'user' ? (
+                res.picture ? <img src={res.picture} className="w-10 h-10 rounded-full" /> : <div className="w-10 h-10 rounded-full bg-surfaceLight flex items-center justify-center font-bold">{res.name?.charAt(0)}</div>
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center">{res.isChannel ? <Megaphone size={18} className="text-purple-400"/> : <Users size={18} className="text-blue-400"/>}</div>
+              )}
+              <div>
+                <p className="text-sm font-bold">{res.name}</p>
+                <p className="text-[10px] text-white/40 uppercase">{res.type}</p>
+              </div>
+            </div>
+          ))}
+          {!isSearching && searchResults.length === 0 && (
+            <div className="text-center mt-10 px-4">
+              <p className="text-white/60 mb-2">No results found.</p>
+              <p className="text-xs text-white/40 mb-4">
+                Nostr search can be slow for new accounts. 
+                <br/>
+                For a 100% guaranteed connection, ask your friend to send you their <strong>npub</strong> or <strong>NIP-05 address</strong> (like name@domain.com) and paste it here.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // --- ACTIVE DM VIEW ---
+  if (view === 'dm' && activeDm) {
+    const activeMessages = dms[activeDm] || []
+    // ✅ FIX: Use hoisted profiles
+    const profile = profiles[activeDm] || { displayName: activeDm.slice(0,8) }
+
+    return (
+      <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 20, opacity: 0 }} transition={{ duration: 0.2 }} className="fixed inset-0 z-50 flex flex-col bg-[#0a0a0a] pb-[72px]">
+        <ToastUI />
+        <ContextMenu />
+        
+        <div className="flex items-center gap-3 p-4 bg-surface/90 backdrop-blur-md border-b border-white/5 flex-shrink-0">
+          <button onClick={() => setView('list')} className="p-2 -ml-2 text-white/60 hover:text-white active:scale-90 transition-transform"><ArrowLeft size={20} /></button>
+          {profile.picture ? <img src={profile.picture} className="w-8 h-8 rounded-full" /> : <div className="w-8 h-8 rounded-full bg-surfaceLight flex items-center justify-center text-xs font-bold">{profile.displayName.charAt(0)}</div>}
+          <div>
+            <h3 className="text-sm font-semibold">{profile.displayName}</h3>
+          </div>
+        </div>
+        
+        <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 p-4 space-y-4">
+          {activeMessages.map((msg, i) => {
+            if (deletedMsgs.has(msg.id)) return null
+            const showTail = i === 0 || activeMessages[i-1].isSender !== msg.isSender
+            const repliedMsg = msg.replyTo ? activeMessages.find(m => m.id === msg.replyTo) : null
+            
+            return (
+              <div key={msg.id} className={`flex flex-col ${msg.isSender ? 'items-end' : 'items-start'} animate-fade-in`}>
+                <div 
+                  onClick={() => setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: msg.data.message || msg.data.url })}
+                  className={`max-w-[85%] px-4 py-2 relative shadow-sm cursor-pointer group ${
+                  msg.isSender 
+                    ? `bg-[#2b5278] text-white ${showTail ? 'rounded-2xl rounded-tr-sm' : 'rounded-2xl'}` 
+                    : `bg-[#182533] text-white ${showTail ? 'rounded-2xl rounded-tl-sm' : 'rounded-2xl'}`
+                }`}>
+                  
+                  {repliedMsg && (
+                    <div className="bg-black/20 p-2 rounded-lg mb-2 border-l-2 border-blue-400 text-xs text-white/70 truncate">
+                      {repliedMsg.data.message || repliedMsg.data.url}
+                    </div>
+                  )}
+
+                  {msg.data.type === 'cipher_order' && <div className="font-bold text-sm mb-1">📦 Order Received</div>}
+                  {msg.data.type === 'image' && <img src={msg.data.url} className="rounded-lg max-h-60 object-cover mb-1" />}
+                  {msg.data.type === 'audio' && <audio controls src={msg.data.url} className="max-w-full h-10 mb-1" />}
+                  {msg.data.type === 'audio' && <audio controls src={msg.data.url} className="max-w-full h-10 mb-1" />}
+                  {msg.data.type === 'text' && <p className="text-[15px] leading-snug break-words overflow-hidden w-full">{renderMessage(msg.data.message)}</p>}
+                  
+                  <div className="flex items-center justify-end gap-1 mt-1 opacity-60">
+                    <span className="text-[10px]">{new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+          <div className="h-4" />
+        </div>
+
+        <div className="p-3 bg-[#111] border-t border-white/10 flex-shrink-0 flex flex-col gap-2">
+          {replyingTo && (
+            <div className="flex items-center justify-between bg-surfaceLight px-3 py-2 rounded-xl border-l-2 border-blue-500">
+              <div className="flex flex-col truncate pr-4 text-xs text-white/70">
+                <span className="font-bold text-blue-400">Replying to {replyingTo.pubkey === identity.pk ? 'Yourself' : profile.displayName}</span>
+                <span className="truncate">{replyingTo.text || 'Media'}</span>
+              </div>
+              <button onClick={() => setReplyingTo(null)} className="p-1 bg-black/20 rounded-full text-white/50 hover:text-white"><X size={14}/></button>
+            </div>
+          )}
+
+          {showEmojiPicker && (
+            <div className="bg-surfaceLight p-3 rounded-2xl grid grid-cols-8 gap-2 mb-2 animate-slide-up">
+              {Emojis.map(e => (
+                <button key={e} onClick={() => setReplyText(prev => prev + e)} className="text-xl hover:scale-125 transition-transform">{e}</button>
+              ))}
+            </div>
+          )}
+
+          <form onSubmit={(e) => { e.preventDefault(); sendMessage(replyText); }} className="flex items-end gap-2 max-w-md mx-auto w-full">
+            <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" ref={fileInputRef} />
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploadingImage} className="p-3 rounded-full bg-surfaceLight text-white/50 hover:text-white transition-colors">
+              {uploadingImage ? <RefreshCw size={20} className="animate-spin" /> : <ImageIcon size={20} />}
+            </button>
+            
+            <div className="flex-1 bg-surfaceLight rounded-3xl border border-white/10 overflow-hidden flex items-center px-2 py-1">
+              <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="p-2 text-white/40 hover:text-white"><Smile size={20}/></button>
+              <input 
+                type="text" 
+                value={replyText} 
+                onChange={(e) => setReplyText(e.target.value)} 
+                placeholder="Message" 
+                className="flex-1 bg-transparent px-2 py-2 text-[15px] text-white outline-none placeholder-white/30" 
+              />
+            </div>
+            
+            {replyText.trim() ? (
+              <button type="submit" className="p-3 rounded-full flex-shrink-0 transition-transform active:scale-90 shadow-lg bg-[#2b5278] text-white">
+                <Send size={20} className="-ml-0.5 mt-0.5" />
+              </button>
+            ) : (
+              <button type="button" onClick={isRecording ? stopRecording : startRecording} className={`p-3 rounded-full flex-shrink-0 transition-transform active:scale-90 shadow-lg ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-surfaceLight text-white/50'}`}>
+                {isRecording ? <Square size={20} /> : <Mic size={20} />}
+              </button>
+            )}
+          </form>
+        </div>
+      </motion.div>
+    )
+  }
+
+  // --- ACTIVE GROUP VIEW ---
+  if (view === 'group' && activeGroup) {
+    const messages = groupMessages[activeGroup.id] || []
+    const canPost = !activeGroup.isChannel || activeGroup.creator === identity.pk
+
+    return (
+      <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 20, opacity: 0 }} transition={{ duration: 0.2 }} className="fixed inset-0 z-50 flex flex-col bg-[#0a0a0a] pb-[72px]">
+        <ToastUI />
+        <ContextMenu />
+
+        <div className="flex items-center justify-between p-4 bg-surface/90 backdrop-blur-md border-b border-white/5 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setView('list')} className="p-2 -ml-2 text-white/60 hover:text-white active:scale-90 transition-transform"><ArrowLeft size={20} /></button>
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center bg-blue-500/20`}>
+              {activeGroup.isChannel ? <Megaphone size={20} className="text-purple-400"/> : <Users size={20} className="text-blue-400"/>}
+            </div>
+            <div>
+              <h3 className="text-[15px] font-semibold flex items-center gap-1.5">{activeGroup.name}</h3>
+              <p className="text-[11px] text-white/40">{activeGroup.isChannel ? 'Channel' : 'Group'}</p>
+              <button onClick={() => leaveGroup(activeGroup.id)} className="ml-auto text-xs text-red-400 hover:text-red-300 font-bold px-3 py-1 bg-red-500/10 rounded-full">
+                Leave
+              </button>
+            </div>
+          </div>
+          <button onClick={() => {
+            const { nip19 } = require('nostr-tools');
+            const relayUrl = 'wss://groups.aegispayhq.com';
+            const relayPubkey = activeGroup.creator || identity.pk; // Fallback
+            const naddr = nip19.naddrEncode({
+              kind: 39000,
+              pubkey: relayPubkey,
+              identifier: activeGroup.id,
+              relays: [relayUrl]
+            });
+            const url = `${window.location.origin}?naddr=${naddr}`;
+            navigator.clipboard.writeText(`Join my group "${activeGroup.name}" on Cipher!\nLink: ${url}`);
+            setToast({type: 'success', message: 'Invite Link Copied!'})
+          }} className="p-2.5 bg-surfaceLight rounded-full text-white/70 hover:text-white transition-colors">
+            <Share2 size={18} />
+          </button>
+        </div>
+
+        <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 p-4 space-y-4">
+          {messages.map((msg, i) => {
+            if (deletedMsgs.has(msg.id)) return null
+            const showTail = i === 0 || messages[i-1].isSender !== msg.isSender
+            let parsed = {}; try { parsed = JSON.parse(msg.rawContent) } catch(e) {}
+            const repliedMsg = msg.replyTo ? messages.find(m => m.id === msg.replyTo) : null
+            let repliedParsed = {}; try { repliedParsed = JSON.parse(repliedMsg?.rawContent) } catch(e) {}
+            
+            return (
+              <div key={msg.id} className={`flex flex-col ${msg.isSender ? 'items-end' : 'items-start'} animate-fade-in`}>
+                <div 
+                  onClick={() => setSelectedMessage({ id: msg.id, pubkey: msg.pubkey, text: parsed.message || parsed.url })}
+                  className={`max-w-[85%] px-4 py-2 relative shadow-sm cursor-pointer group ${
+                  msg.isSender 
+                    ? `bg-[#2b5278] text-white ${showTail ? 'rounded-2xl rounded-tr-sm' : 'rounded-2xl'}` 
+                    : `bg-[#182533] text-white ${showTail ? 'rounded-2xl rounded-tl-sm' : 'rounded-2xl'}`
+                }`}>
+                  
+                  {repliedMsg && (
+                    <div className="bg-black/20 p-2 rounded-lg mb-2 border-l-2 border-blue-400 text-xs text-white/70 truncate">
+                      {repliedParsed.message || repliedParsed.url}
+                    </div>
+                  )}
+
+                  {!msg.isSender && <p className="text-[11px] text-blue-300 font-semibold mb-1">{msg.pubkey.slice(0,8)}</p>}
+                  {parsed.type === 'image' && <img src={parsed.url} className="rounded-lg max-h-60 object-cover mb-1" />}
+                  {parsed.type === 'audio' && <audio controls src={parsed.url} className="max-w-full h-10 mb-1" />}
+                  {parsed.type === 'text' && <p className="text-[15px] leading-snug break-words">{renderMessage(parsed.message)}</p>}
+                  
+                  <div className="flex items-center justify-end gap-1 mt-1 opacity-60">
+                    <span className="text-[10px]">{new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+          <div className="h-4" />
+        </div>
+
+        <div className="p-3 bg-[#111] border-t border-white/10 flex-shrink-0 flex flex-col gap-2">
+          {canPost ? (
+            <>
+              {replyingTo && (
+                <div className="flex items-center justify-between bg-surfaceLight px-3 py-2 rounded-xl border-l-2 border-blue-500">
+                  <div className="flex flex-col truncate pr-4 text-xs text-white/70">
+                    <span className="font-bold text-blue-400">Replying to {replyingTo.pubkey === identity.pk ? 'Yourself' : replyingTo.pubkey.slice(0,8)}</span>
+                    <span className="truncate">{replyingTo.text || 'Media'}</span>
+                  </div>
+                  <button onClick={() => setReplyingTo(null)} className="p-1 bg-black/20 rounded-full text-white/50 hover:text-white"><X size={14}/></button>
+                </div>
+              )}
+
+              <form onSubmit={(e) => { e.preventDefault(); sendMessage(replyText); }} className="flex items-end gap-2 max-w-md mx-auto w-full">
+                <div className="flex-1 bg-surfaceLight rounded-3xl border border-white/10 overflow-hidden flex items-center px-2 py-1">
+                  <input 
+                    type="text" 
+                    value={replyText} 
+                    onChange={(e) => setReplyText(e.target.value)} 
+                    placeholder={activeGroup.isChannel ? "Broadcast..." : "Message group"} 
+                    className="flex-1 bg-transparent px-2 py-2 text-[15px] text-white outline-none placeholder-white/30" 
+                  />
+                </div>
+                
+                {replyText.trim() ? (
+                  <button type="submit" className="p-3 rounded-full flex-shrink-0 transition-transform active:scale-90 shadow-lg bg-[#2b5278] text-white">
+                    <Send size={20} className="-ml-0.5 mt-0.5" />
+                  </button>
+                ) : (
+                  <button type="button" className={`p-3 rounded-full flex-shrink-0 transition-transform active:scale-90 shadow-lg bg-surfaceLight text-white/50`}>
+                    <Mic size={20} />
+                  </button>
+                )}
+              </form>
+            </>
+          ) : (
+            <div className="text-center text-white/40 text-xs py-2">
+              Only the channel creator can post here.
+            </div>
+          )}
+        </div>
+      
+      </motion.div>
+    )
+  }
+
+  return null
+}
+
+function MessageIcon({ size }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+}
