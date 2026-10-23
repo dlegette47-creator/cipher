@@ -1,10 +1,12 @@
-import React from 'react';
-import { Plus, X, Users, Megaphone } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { Plus, Users, Megaphone, MessageCircle } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
 
-function MessageIcon({ size }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>;
-}
+const ACTIONS = [
+  { key: 'chat', label: 'New Chat', Icon: MessageCircle, color: 'bg-blue-500' },
+  { key: 'group', label: 'New Group', Icon: Users, color: 'bg-emerald-500' },
+  { key: 'channel', label: 'New Channel', Icon: Megaphone, color: 'bg-violet-500' },
+];
 
 export default function FloatingMenu() {
   const showMenu = useChatStore((s) => s.showMenu);
@@ -13,45 +15,49 @@ export default function FloatingMenu() {
   const setShowCreateGroup = useChatStore((s) => s.setShowCreateGroup);
   const setIsChannel = useChatStore((s) => s.setIsChannel);
 
+  useEffect(() => {
+    if (!showMenu) return;
+    const onKey = (e) => { if (e.key === 'Escape') setShowMenu(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showMenu, setShowMenu]);
+
+  const run = (key) => {
+    setShowMenu(false);
+    if (key === 'chat') setView('search');
+    else { setIsChannel(key === 'channel'); setShowCreateGroup(true); }
+  };
+
   return (
     <>
       {showMenu && (
         <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm" onClick={() => setShowMenu(false)}>
-          <div className="absolute bottom-[10rem] right-6 flex flex-col gap-3 items-end">
-            <button
-              onClick={() => { setShowMenu(false); setView('search'); }}
-              className="flex items-center gap-3 bg-[#1c1c1e] px-4 py-3 rounded-full border border-white/10 shadow-2xl animate-slide-up"
-            >
-              <span className="text-sm font-semibold text-white">New Chat</span>
-              <div className="p-2 bg-blue-500 rounded-full text-white"><MessageIcon size={18} /></div>
-            </button>
-            <button
-              onClick={() => { setShowMenu(false); setIsChannel(false); setShowCreateGroup(true); }}
-              className="flex items-center gap-3 bg-[#1c1c1e] px-4 py-3 rounded-full border border-white/10 shadow-2xl animate-slide-up"
-              style={{ animationDelay: '50ms' }}
-            >
-              <span className="text-sm font-semibold text-white">New Group</span>
-              <div className="p-2 bg-green-500 rounded-full text-white"><Users size={18} /></div>
-            </button>
-            <button
-              onClick={() => { setShowMenu(false); setIsChannel(true); setShowCreateGroup(true); }}
-              className="flex items-center gap-3 bg-[#1c1c1e] px-4 py-3 rounded-full border border-white/10 shadow-2xl animate-slide-up"
-              style={{ animationDelay: '100ms' }}
-            >
-              <span className="text-sm font-semibold text-white">New Channel</span>
-              <div className="p-2 bg-purple-500 rounded-full text-white"><Megaphone size={18} /></div>
-            </button>
+          <div className="fixed fab-menu-pos flex flex-col gap-3 items-end" role="menu">
+            {ACTIONS.map(({ key, label, Icon, color }, i) => (
+              <button
+                key={key}
+                role="menuitem"
+                onClick={(e) => { e.stopPropagation(); run(key); }}
+                className="flex items-center gap-3 bg-[#1c1c1e] pl-4 pr-2 py-2 rounded-full border border-white/10 shadow-2xl animate-slide-up"
+                style={{ animationDelay: `${i * 50}ms` }}
+              >
+                <span className="text-sm font-semibold text-white">{label}</span>
+                <span className={`p-2 ${color} rounded-full text-white`}><Icon size={18} aria-hidden="true" /></span>
+              </button>
+            ))}
           </div>
         </div>
       )}
 
       <button
         onClick={() => setShowMenu(!showMenu)}
-        className={`fixed bottom-24 right-6 p-4 rounded-full shadow-lg transition-all z-[70] ${
-          showMenu ? 'bg-[#1c1c1e] border border-white/20 text-white rotate-45' : 'bg-white text-black hover:scale-105 active:scale-90'
+        aria-label={showMenu ? 'Close menu' : 'New chat, group or channel'}
+        aria-expanded={showMenu}
+        className={`fixed fab-pos h-14 w-14 flex items-center justify-center rounded-full shadow-lg shadow-black/50 transition-all z-[70] ${
+          showMenu ? 'bg-[#1c1c1e] border border-white/20 text-white' : 'bg-white text-black hover:scale-105 active:scale-90'
         }`}
       >
-        <Plus size={24} className={showMenu ? 'rotate-45 transition-transform' : 'transition-transform'} />
+        <Plus size={24} className={`transition-transform ${showMenu ? 'rotate-45' : ''}`} aria-hidden="true" />
       </button>
     </>
   );

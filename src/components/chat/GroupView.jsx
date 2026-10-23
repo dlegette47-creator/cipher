@@ -172,7 +172,7 @@ export default function GroupView({
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 20, opacity: 0 }}
       transition={{ duration: 0.2 }}
-      className="absolute inset-0 z-50 flex flex-col bg-[#0a0a0a] pb-[72px]"
+      className="absolute inset-0 z-50 flex flex-col bg-[#0a0a0a] pb-safe"
     >
       <ChatHeader mode="group" identity={identity} />
       <ChatPinnedBar unpinMessage={unpinMessage} />

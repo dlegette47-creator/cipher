@@ -10,8 +10,32 @@ html, body, #root {
   overscroll-behavior: none;
 }
 
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --nav-h: 4rem;
+  /* Keeps fixed elements aligned to the centered max-w-md app column on wide screens */
+  --app-edge: max(1.25rem, calc(50% - 14rem + 1.25rem));
+}
+
 @tailwind components;
 @tailwind utilities;
+
+@layer utilities {
+  .pt-safe { padding-top: var(--sat); }
+  .pb-safe { padding-bottom: var(--sab); }
+  .pb-sheet { padding-bottom: calc(1.5rem + var(--sab)); }
+  .top-safe { top: calc(var(--sat) + 1rem); }
+  .fab-pos { bottom: calc(var(--nav-h) + var(--sab) + 1.25rem); right: var(--app-edge); }
+  .fab-menu-pos { bottom: calc(var(--nav-h) + var(--sab) + 6rem); right: var(--app-edge); }
+  .touch-target { min-width: 44px; min-height: 44px; }
+}
+
+button, a, [role="button"] { touch-action: manipulation; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
 
 body {
   background-color: #000000 !important;

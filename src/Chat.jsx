@@ -1,7 +1,7 @@
 import { getMyGroups, setMyGroups } from './lib/myGroups';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { RefreshCw, Search } from 'lucide-react';
+import { RefreshCw, Search, Bookmark, Bell, ScanLine } from 'lucide-react';
 import { uploadToBlossom } from '@nostr-wot/blossom';
 import { db, saveMessage, openDBFor } from './db';
 import ChatList from './components/chat/ChatList';
@@ -808,7 +808,7 @@ export default function Chat({ identity }) {
   };
 
   const ToastUI = () => toast && (
-    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-surfaceLight border border-white/10 px-5 py-3 rounded-2xl shadow-2xl animate-slide-up flex items-center gap-3">
+    <div className="fixed top-safe left-1/2 -translate-x-1/2 z-[200] bg-surfaceLight border border-white/10 px-5 py-3 rounded-2xl shadow-2xl animate-slide-up flex items-center gap-3">
       <div className={`w-2 h-2 rounded-full ${toast.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`} />
       <span className="text-sm font-semibold text-white">{toast.message}</span>
     </div>
@@ -1301,25 +1301,38 @@ export default function Chat({ identity }) {
   }
 
   if (view === 'list') {
+    const totalUnreadAll = Object.values(useChatStore.getState().unreadCounts || {}).reduce((sum, n) => sum + (n || 0), 0);
     return (
       <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} transition={{ duration: 0.2 }} className="flex-1 overflow-y-auto min-h-0 p-4 pb-24 relative">
         <ToastUI />
-        <div className="flex justify-between items-center mb-6">
-          <div className="flex items-center gap-2"><img src="/logo_raw.png" alt="Cipher" className="h-8 w-8 object-contain" /><span className="text-xl font-bold tracking-tight text-white">Cipher</span></div>
-          <div className="flex gap-2">
-            <button onClick={() => setShowBookmarks(true)} className="p-2 text-white/50 hover:text-white" title="Saved">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        <header className="flex justify-between items-center mb-4">
+          <h1 className="flex items-center gap-2">
+            <img src="/logo_raw.png" alt="" className="h-8 w-8 object-contain" />
+            <span className="text-2xl font-bold tracking-tight text-white">Chats</span>
+          </h1>
+          <div className="flex items-center -mr-2">
+            <button onClick={() => setShowBookmarks(true)} aria-label="Saved messages" className="touch-target flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/5 active:scale-90 transition">
+              <Bookmark size={20} aria-hidden="true" />
             </button>
-            <button onClick={() => setShowNotifCenter(true)} className="p-2 text-white/50 hover:text-white" title="Activity">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <button onClick={() => setShowNotifCenter(true)} aria-label={totalUnreadAll > 0 ? `Activity, ${totalUnreadAll} unread` : 'Activity'} className="relative touch-target flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/5 active:scale-90 transition">
+              <Bell size={20} aria-hidden="true" />
+              {totalUnreadAll > 0 && <span className="absolute top-2.5 right-2.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-black" aria-hidden="true" />}
             </button>
-            <button onClick={() => fetchChats(true)} className="p-2 text-white/50 hover:text-white"><RefreshCw size={20}/></button>
-            <button onClick={() => setView('search')} className="p-2 text-white/50 hover:text-white"><Search size={20}/></button>
-            <button onClick={() => setShowQRScanner(true)} className="p-2 text-white/50 hover:text-white">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+            <button onClick={() => setShowQRScanner(true)} aria-label="Scan QR code" className="touch-target flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/5 active:scale-90 transition">
+              <ScanLine size={20} aria-hidden="true" />
+            </button>
+            <button onClick={() => fetchChats(true)} aria-label="Refresh chats" className="touch-target flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/5 active:scale-90 transition">
+              <RefreshCw size={18} aria-hidden="true" />
             </button>
           </div>
-        </div>
+        </header>
+        <button
+          onClick={() => setView('search')}
+          className="w-full flex items-center gap-3 h-11 px-4 mb-5 rounded-xl bg-white/[0.06] border border-white/5 text-white/40 text-[15px] hover:bg-white/[0.08] active:scale-[0.99] transition"
+        >
+          <Search size={18} aria-hidden="true" />
+          <span>Search people, groups, messages</span>
+        </button>
         <ChatList onOpenChat={openChat} />
         <CreateGroupModal createGroup={createGroup} />
         <FloatingMenu /><MyProfileModal identity={identity} />

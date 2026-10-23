@@ -33,7 +33,7 @@ export default function MessageSearchResults({ identity, setView, openChat }) {
   };
 
   return (
-    <div className="h-full flex flex-col bg-[#0a0a0a] pb-24">
+    <div className="h-full flex flex-col bg-[#0a0a0a] pb-8">
       <div className="p-4 border-b border-white/5 flex items-center gap-3 shrink-0">
         <button onClick={() => setView('list')} className="p-2 -ml-2 text-white/60 hover:text-white">
           <ChevronLeft size={24} />

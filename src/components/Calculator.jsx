@@ -47,7 +47,7 @@ export default function Calculator({ onUnlock }) {
   ];
 
   return (
-    <div className="fixed inset-0 bg-white dark:bg-black flex flex-col justify-end p-4 pb-12 z-[9999]">
+    <div className="fixed inset-0 bg-white dark:bg-black flex flex-col justify-end p-4 pb-sheet pt-safe z-[9999]">
       <div className="flex-1 flex items-end justify-end p-6 mb-4">
         <h1 className="text-black dark:text-white text-7xl font-light tracking-tighter truncate max-w-full">
           {display}

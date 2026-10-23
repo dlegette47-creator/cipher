@@ -53,7 +53,7 @@ export default function Discover({ identity, setActiveTab }) {
   const filtered = groups.filter(g => g.name.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <div className="h-full p-4 flex flex-col bg-[#0a0a0a] overflow-hidden pb-24">
+    <div className="h-full p-4 flex flex-col bg-[#0a0a0a] overflow-hidden pb-8">
       <div className="flex items-center gap-3 mb-6 shrink-0">
         <Compass size={24} className="text-white" />
         <h2 className="text-2xl font-bold tracking-tight text-white">Discover</h2>

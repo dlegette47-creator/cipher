@@ -235,7 +235,7 @@ export default function Wallet({ identity }) {
   // --- SUB-SCREEN: EDIT PROFILE ---
   if (view === 'edit_profile') {
     return (
-      <div className="h-full p-4 animate-slide-up pb-24 flex-1 min-h-0 overflow-y-auto">
+      <div className="h-full p-4 animate-slide-up pb-8 flex-1 min-h-0 overflow-y-auto">
         <div className="flex items-center gap-2 mb-6">
           <button onClick={() => setView('main')} className="p-2 -ml-2 text-black dark:text-white/50 hover:text-black dark:text-white transition-colors">
             <ArrowLeft size={20}/>
@@ -356,7 +356,7 @@ export default function Wallet({ identity }) {
 
   if (view === 'product') {
     return (
-      <div className="h-full p-4 animate-slide-up flex-1 min-h-0 overflow-y-auto pb-24">
+      <div className="h-full p-4 animate-slide-up flex-1 min-h-0 overflow-y-auto pb-8">
         <button onClick={() => setView('main')} className="flex items-center gap-1 text-black dark:text-white/50 text-sm mb-6 hover:text-black dark:text-white"><ArrowLeft size={16}/> Back</button>
         <h2 className="text-xl font-bold mb-6">List New Product</h2>
         
@@ -398,7 +398,7 @@ export default function Wallet({ identity }) {
   // --- SUB-SCREEN: PAYMENTS ---
   if (view === 'payments') {
     return (
-      <div className="h-full p-4 animate-slide-up flex-1 min-h-0 overflow-y-auto pb-24">
+      <div className="h-full p-4 animate-slide-up flex-1 min-h-0 overflow-y-auto pb-8">
         <button onClick={() => setView('main')} className="flex items-center gap-1 text-black dark:text-white/50 text-sm mb-6 hover:text-black dark:text-white"><ArrowLeft size={16}/> Back</button>
         <h2 className="text-xl font-bold mb-6">Payment Addresses</h2>
         <div className="space-y-4">
@@ -412,8 +412,8 @@ export default function Wallet({ identity }) {
 
   // --- MAIN PROFILE TAB ---
   return (
-    <div className="h-full p-4 animate-fade-in flex-1 min-h-0 overflow-y-auto pb-24">
-      {status && <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-white text-black px-4 py-2 rounded-xl text-xs font-bold shadow-lg z-50 animate-bounce">{status}</div>}
+    <div className="h-full p-4 animate-fade-in flex-1 min-h-0 overflow-y-auto pb-8">
+      {status && <div className="fixed top-safe left-1/2 -translate-x-1/2 bg-white text-black px-4 py-2 rounded-xl text-xs font-bold shadow-lg z-[200] animate-fade-in">{status}</div>}
 
       <div className="flex flex-col items-center justify-center py-6 bg-gray-50 dark:bg-[#0a0a0a] rounded-3xl border border-gray-300 dark:border-gray-800/50 mb-6">
         <div className="relative mb-4">

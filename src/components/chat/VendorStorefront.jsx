@@ -90,7 +90,7 @@ export default function VendorStorefront({ isOpen, onClose, vendorPubkey, profil
           initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} 
           transition={{ type: 'spring', damping: 25, stiffness: 300 }} 
           onClick={e => e.stopPropagation()} 
-          className="w-full max-w-md bg-[#1c1c1e] rounded-t-[2rem] border-t border-white/10 max-h-[92vh] flex flex-col"
+          className="w-full max-w-md bg-[#1c1c1e] rounded-t-[2rem] border-t border-white/10 max-h-[92dvh] flex flex-col"
         >
           <div className="w-10 h-1 bg-white/20 rounded-full mx-auto mt-3 mb-2" />
           

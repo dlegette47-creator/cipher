@@ -33,7 +33,7 @@ export default function ForwardModal({ isOpen, onClose, onForward }) {
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
-      <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-3xl w-full max-w-md h-[70vh] flex flex-col overflow-hidden shadow-2xl animate-slide-up">
+      <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-3xl w-full max-w-md h-[70dvh] flex flex-col overflow-hidden shadow-2xl animate-slide-up">
         
         <div className="p-4 border-b border-white/10 flex justify-between items-center bg-[#0a0a0a]">
           <h2 className="text-lg font-bold text-white">Forward to...</h2>

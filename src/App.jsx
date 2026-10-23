@@ -22,7 +22,7 @@ class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-black text-red-500 p-6 font-mono flex flex-col items-center justify-center">
+        <div className="h-full overflow-auto bg-black text-red-500 p-6 font-mono flex flex-col items-center justify-center">
           <h1 className="text-2xl font-bold mb-4">App Crashed</h1>
           <pre className="text-xs whitespace-pre-wrap bg-red-900/20 p-4 rounded-xl border border-red-500/50 w-full max-w-md overflow-auto">{this.state.error.toString()}</pre>
           <button onClick={() => window.location.reload()} className="mt-6 px-6 py-3 bg-white text-black font-bold rounded-xl">Reload</button>
@@ -71,7 +71,8 @@ function MainApp() {
 
   const [activeTab, setActiveTab] = useState('chat')
   const unreadCounts = useChatStore(s => s.unreadCounts);
-  const totalUnread = Object.values(unreadCounts || {}).reduce((sum, n) => sum + (n || 0), 0);;
+  const chatView = useChatStore(s => s.view);
+  const totalUnread = Object.values(unreadCounts || {}).reduce((sum, n) => sum + (n || 0), 0);
 
   useEffect(() => {
     const handler = () => setActiveTab('chat');
@@ -97,16 +98,23 @@ function MainApp() {
     
 
   if (identity.loadingSession) {
-    return <div className="h-screen bg-black flex items-center justify-center"><div className="w-8 h-8 border-4 border-white/20 border-t-white rounded-full animate-spin"></div></div>;
+    return <div className="h-full bg-black flex items-center justify-center" role="status" aria-label="Loading"><div className="w-8 h-8 border-4 border-white/20 border-t-white rounded-full animate-spin"></div></div>;
   }
 
   if (!identity.sk) return <LockScreen identity={identity} />
 
+  const tabs = [
+    { id: 'chat', label: 'Chats', Icon: MessageSquare, badge: totalUnread },
+    { id: 'explore', label: 'Discover', Icon: Compass },
+    { id: 'profile', label: 'Profile', Icon: User },
+  ];
+  const hideNav = activeTab === 'chat' && (chatView === 'dm' || chatView === 'group');
+
   return (
-    <div className="h-full w-full bg-base text-white overflow-hidden flex justify-center">
+    <div className="h-full w-full bg-base text-white overflow-hidden flex flex-col pt-safe">
       <TutorialModal isOpen={showTutorial} onClose={() => { setShowTutorial(false); localStorage.removeItem('cipher_new_account'); }} />
       <GlobalDialog />
-      <main className="w-full max-w-md h-full relative overflow-hidden">
+      <main className="flex-1 min-h-0 w-full max-w-md mx-auto relative overflow-hidden">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -123,32 +131,40 @@ function MainApp() {
         </AnimatePresence>
       </main>
 
-      <motion.nav 
-        initial={{ y: 50 }} animate={{ y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className="fixed bottom-0 left-0 right-0 z-50 bg-base/90 backdrop-blur-xl border-t border-white/10 pb-safe"
-      >
-        <div className="flex justify-around items-center h-16 max-w-md mx-auto px-6">
-          <button onClick={() => { haptic(10); setActiveTab('chat'); }} className={`relative flex flex-col items-center justify-center gap-1 w-16 h-full outline-none focus:outline-none focus:ring-0 transition-all active:scale-90 ${activeTab === 'chat' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-            <div className="relative">
-              <MessageSquare size={22} strokeWidth={activeTab === 'chat' ? 2.5 : 2} strokeLinecap="round" className={activeTab === 'chat' ? 'text-blue-500' : ''} />
-              {totalUnread > 0 && activeTab !== 'chat' && (
-                <span className="absolute -top-1.5 -right-2 min-w-[16px] h-[16px] bg-red-500 rounded-full flex items-center justify-center text-[9px] font-bold text-white px-1">
-                  {totalUnread > 99 ? '99+' : totalUnread}
-                </span>
-              )}
-            </div>
-            <span className="text-[10px] font-medium">Chats</span>
-          </button>
-          <button onClick={() => { haptic(10); setActiveTab('explore'); }} className={`flex flex-col items-center justify-center gap-1 w-16 h-full outline-none focus:outline-none focus:ring-0 transition-all active:scale-90 ${activeTab === 'explore' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-            <Compass size={22} strokeWidth={activeTab === 'explore' ? 2.5 : 2} className={activeTab === 'explore' ? 'text-blue-500' : ''} />
-            <span className="text-[10px] font-medium">Discover</span>
-          </button>
-          <button onClick={() => { haptic(10); setActiveTab('profile'); }} className={`flex flex-col items-center justify-center gap-1 w-16 h-full outline-none focus:outline-none focus:ring-0 transition-all active:scale-90 ${activeTab === 'profile' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-            <User size={22} strokeWidth={activeTab === 'profile' ? 2.5 : 2} className={activeTab === 'profile' ? 'text-blue-500' : ''} />
-            <span className="text-[10px] font-medium">Profile</span>
-          </button>
-        </div>
-      </motion.nav>
+      {!hideNav && (
+        <nav aria-label="Main" className="shrink-0 z-50 bg-black/85 backdrop-blur-xl border-t border-white/10 pb-safe">
+          <div className="flex justify-around items-stretch h-16 max-w-md mx-auto px-2">
+            {tabs.map(({ id, label, Icon, badge }) => {
+              const active = activeTab === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => {
+                    haptic(10);
+                    if (active && id === 'chat') useChatStore.getState().closeChat?.();
+                    setActiveTab(id);
+                  }}
+                  className={`relative flex-1 flex flex-col items-center justify-center gap-1 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors active:scale-95 ${active ? 'text-white' : 'text-white/45 hover:text-white/70'}`}
+                >
+                  {active && <motion.span layoutId="nav-pill" className="absolute top-1.5 h-8 w-14 rounded-full bg-white/10" transition={{ type: 'spring', stiffness: 500, damping: 40 }} />}
+                  <span className="relative">
+                    <Icon size={22} strokeWidth={active ? 2.4 : 2} className={active ? 'text-blue-500' : ''} aria-hidden="true" />
+                    {badge > 0 && (
+                      <span className="absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] bg-red-500 rounded-full flex items-center justify-center text-[10px] font-bold text-white px-1 ring-2 ring-black">
+                        {badge > 99 ? '99+' : badge}
+                        <span className="sr-only"> unread</span>
+                      </span>
+                    )}
+                  </span>
+                  <span className="relative text-[11px] font-medium">{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
     </div>
   )
 }

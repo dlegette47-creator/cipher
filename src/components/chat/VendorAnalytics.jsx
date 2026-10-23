@@ -85,7 +85,7 @@ export default function VendorAnalytics({ identity, setView }) {
     .slice(0, 5);
 
   return (
-    <div className="h-full flex flex-col bg-[#0a0a0a] pb-24">
+    <div className="h-full flex flex-col bg-[#0a0a0a] pb-8">
       {/* Header */}
       <div className="p-4 border-b border-white/5 shrink-0">
         <div className="flex items-center gap-3 mb-3">

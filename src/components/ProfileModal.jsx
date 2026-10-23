@@ -54,7 +54,7 @@ export default function ProfileModal({ pubkey, profile, identity, onClose, onMes
 
   return (
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-white dark:bg-black/60 backdrop-blur-sm animate-fade-in" onClick={onClose}>
-      <div className="bg-[#111] border border-gray-300 dark:border-gray-800 rounded-t-3xl sm:rounded-3xl w-full max-w-md overflow-hidden shadow-2xl relative max-h-[90vh] overflow-y-auto animate-slide-up" onClick={e => e.stopPropagation()}>
+      <div className="bg-[#111] border border-gray-300 dark:border-gray-800 rounded-t-3xl sm:rounded-3xl w-full max-w-md overflow-hidden shadow-2xl relative max-h-[90dvh] overflow-y-auto animate-slide-up" onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-4 right-4 z-10 p-2 bg-white dark:bg-black/50 rounded-full text-black dark:text-white/70 hover:text-black dark:text-white transition-colors">
           <X size={20} />
         </button>

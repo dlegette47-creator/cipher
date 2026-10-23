@@ -60,7 +60,7 @@ export default function ModerationLog({ isOpen, onClose, groupId }) {
           initial={{ y: '-100%' }} animate={{ y: 0 }} exit={{ y: '-100%' }} 
           transition={{ type: 'spring', damping: 25, stiffness: 300 }} 
           onClick={e => e.stopPropagation()} 
-          className="w-full max-w-md bg-[#1c1c1e] rounded-b-[2rem] border-t border-white/10 p-5 pt-10 max-h-[80vh] flex flex-col"
+          className="w-full max-w-md bg-[#1c1c1e] rounded-b-[2rem] border-t border-white/10 p-5 pt-10 max-h-[80dvh] flex flex-col"
         >
                     <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-bold text-white flex items-center gap-2"><ShieldAlert size={18} className="text-yellow-400"/> Moderation Log</h2>

@@ -14,7 +14,7 @@ export default function BulkActionBar({ onForward, onDelete }) {
     <AnimatePresence>
       <motion.div 
         initial={{ y: 100 }} animate={{ y: 0 }} exit={{ y: 100 }}
-        className="fixed bottom-0 left-0 right-0 z-[80] bg-[#1c1c1e] border-t border-white/10 p-3 pb-6 flex items-center gap-3"
+        className="fixed bottom-0 left-0 right-0 z-[80] bg-[#1c1c1e] border-t border-white/10 p-3 pb-sheet flex items-center gap-3"
       >
         <button onClick={clearSelection} className="p-3 bg-white/5 rounded-full text-white/60">
           <X size={20} />

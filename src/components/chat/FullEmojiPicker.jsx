@@ -10,7 +10,7 @@ export default function FullEmojiPicker({ onSelect, onClose }) {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         onClick={onClose}
-        className="fixed inset-0 z-[10000] bg-white dark:bg-black/60 backdrop-blur-sm flex items-end justify-center pb-24 sm:items-center sm:pb-0"
+        className="fixed inset-0 z-[10000] bg-white dark:bg-black/60 backdrop-blur-sm flex items-end justify-center pb-sheet sm:items-center sm:pb-0"
       >
         <motion.div 
           initial={{ y: "100%" }}

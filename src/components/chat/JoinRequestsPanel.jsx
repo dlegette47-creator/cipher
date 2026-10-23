@@ -39,7 +39,7 @@ export default function JoinRequestsPanel({ isOpen, onClose, groupId, profiles, 
           initial={{ y: '-100%' }} animate={{ y: 0 }} exit={{ y: '-100%' }} 
           transition={{ type: 'spring', damping: 25, stiffness: 300 }} 
           onClick={e => e.stopPropagation()} 
-          className="w-full max-w-md bg-[#1c1c1e] rounded-b-[2rem] border-t border-white/10 p-5 pt-10 max-h-[85vh] flex flex-col"
+          className="w-full max-w-md bg-[#1c1c1e] rounded-b-[2rem] border-t border-white/10 p-5 pt-10 max-h-[85dvh] flex flex-col"
         >
                     <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-bold text-white flex items-center gap-2">

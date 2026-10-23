@@ -30,7 +30,7 @@ export default function MyOrders({ identity, setView }) {
   };
 
   return (
-    <div className="h-full p-4 animate-fade-in flex-1 min-h-0 overflow-y-auto pb-24 bg-[#0a0a0a]">
+    <div className="h-full p-4 animate-fade-in flex-1 min-h-0 overflow-y-auto pb-8 bg-[#0a0a0a]">
       <div className="flex items-center gap-3 mb-6">
         <button onClick={() => setView('main')} className="p-2 -ml-2 text-white/60 hover:text-white">
           <ChevronRight size={24} className="rotate-180" />

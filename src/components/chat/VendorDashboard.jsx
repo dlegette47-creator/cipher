@@ -137,7 +137,7 @@ export default function VendorDashboard({ identity, products, onBack }) {
       </div>
 
       {/* Scrollable Orders Area */}
-      <div className="flex-1 overflow-y-auto min-h-0 px-4 pb-24">
+      <div className="flex-1 overflow-y-auto min-h-0 px-4 pb-8">
         {fetchingOrders ? (
           <p className="text-black dark:text-white/50 text-center py-10">Fetching orders from relay...</p>
         ) : orders.length === 0 ? (
